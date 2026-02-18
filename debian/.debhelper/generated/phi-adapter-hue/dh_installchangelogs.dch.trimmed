@@ -1,5 +1,0 @@
-phi-adapter-hue (0.0~git20260218.c144376-1) trixie; urgency=medium
-
-  * Initial Debian packaging for phi-adapter-hue.
-
- -- Marius Schumacher <marius.schumacher@phisys.com>  Wed, 18 Feb 2026 18:20:00 +0000
