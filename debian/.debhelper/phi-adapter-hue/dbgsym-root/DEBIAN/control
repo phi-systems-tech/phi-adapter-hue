@@ -1,0 +1,12 @@
+Package: phi-adapter-hue-dbgsym
+Source: phi-adapter-hue
+Version: 0.0~git20260218.c144376-1
+Auto-Built-Package: debug-symbols
+Architecture: arm64
+Maintainer: Marius Schumacher <marius.schumacher@phisys.com>
+Installed-Size: 568
+Depends: phi-adapter-hue (= 0.0~git20260218.c144376-1)
+Section: debug
+Priority: optional
+Description: debug symbols for phi-adapter-hue
+Build-Ids: 8904add67b4b176a389ba6e48e49f642c1bce37f
