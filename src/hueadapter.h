@@ -138,6 +138,8 @@ private:
     QTimer                   m_v2ResyncTimer;
     QTimer                   m_v2DeviceFetchTimer;
     QNetworkReply           *m_eventStreamReply = nullptr;
+    QByteArray               m_eventStreamLineBuffer;
+    QByteArray               m_eventStreamDataBuffer;
     int                      m_eventStreamRetryCount = 0;
     int                      m_eventStreamRetryIntervalMs = 10000;
     bool                     m_connected = false;
@@ -150,6 +152,7 @@ private:
     // event so the channel represents a transient delta rather than a
     // latched value.
     QHash<QString, QTimer *> m_dialResetTimers;
+    QHash<QString, int>      m_lastDialValueByDevice;
     QHash<QString, int>      m_pendingRenameVerifications;
     QSet<QString>            m_activeRenameFetches;
     QHash<QString, QTimer *> m_renameVerifyTimers;

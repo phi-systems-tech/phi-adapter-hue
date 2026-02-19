@@ -1302,6 +1302,8 @@ void HueAdapter::stopEventStream()
     m_eventStreamReply->abort();
     m_eventStreamReply->deleteLater();
     m_eventStreamReply = nullptr;
+    m_eventStreamLineBuffer.clear();
+    m_eventStreamDataBuffer.clear();
 }
 
 void HueAdapter::onEventStreamReadyRead()
@@ -1313,20 +1315,39 @@ void HueAdapter::onEventStreamReadyRead()
     if (!reply || reply != m_eventStreamReply)
         return;
 
-    // Drain incoming data; each SSE "data:" line carries a JSON payload.
+    // Parse SSE framing robustly across chunk boundaries.
     const QByteArray chunk = reply->readAll();
     if (!chunk.isEmpty()) {
         setConnected(true);
         if (m_eventStreamRetryTimer.isActive())
             m_eventStreamRetryTimer.stop();
-        const QList<QByteArray> lines = chunk.split('\n');
-        for (QByteArray line : lines) {
-            line = line.trimmed();
-            if (line.startsWith("data:")) {
-                QByteArray json = line.mid(5).trimmed();
-                if (!json.isEmpty()) {
-                    handleEventStreamData(json);
+        m_eventStreamLineBuffer.append(chunk);
+
+        while (true) {
+            const int newline = m_eventStreamLineBuffer.indexOf('\n');
+            if (newline < 0)
+                break;
+
+            QByteArray line = m_eventStreamLineBuffer.left(newline);
+            m_eventStreamLineBuffer.remove(0, newline + 1);
+            if (!line.isEmpty() && line.endsWith('\r'))
+                line.chop(1);
+
+            if (line.isEmpty()) {
+                if (!m_eventStreamDataBuffer.isEmpty()) {
+                    handleEventStreamData(m_eventStreamDataBuffer);
+                    m_eventStreamDataBuffer.clear();
                 }
+                continue;
+            }
+
+            if (line.startsWith("data:")) {
+                QByteArray payload = line.mid(5);
+                if (!payload.isEmpty() && payload.at(0) == ' ')
+                    payload.remove(0, 1);
+                if (!m_eventStreamDataBuffer.isEmpty())
+                    m_eventStreamDataBuffer.append('\n');
+                m_eventStreamDataBuffer.append(payload);
             }
         }
 
@@ -1406,6 +1427,8 @@ void HueAdapter::onEventStreamFinished()
 
     reply->deleteLater();
     m_eventStreamReply = nullptr;
+    m_eventStreamLineBuffer.clear();
+    m_eventStreamDataBuffer.clear();
 }
 
 void HueAdapter::refreshConfig()
@@ -1438,7 +1461,7 @@ void HueAdapter::handleEventStreamData(const QByteArray &jsonData)
         payload.truncate(2048);
         payload.append(QStringLiteral(" ..."));
     }
-    qCInfo(adapterLog).noquote()
+    qCDebug(adapterLog).noquote()
         << "HueAdapter v2 event stream payload" << payload;
 
     QJsonParseError err {};
@@ -1478,11 +1501,18 @@ void HueAdapter::handleEventStreamEventObject(const QJsonObject &eventObj, qint6
         const QJsonObject resObj = resVal.toObject();
         const QString type = resObj.value(QStringLiteral("type")).toString();
         const QString resId = resObj.value(QStringLiteral("id")).toString();
-        const QString resPayload = QString::fromUtf8(QJsonDocument(resObj).toJson(QJsonDocument::Compact));
-        qCInfo(adapterLog).noquote()
-            << "HueAdapter v2 event resource type" << type
-            << "id" << resId
-            << "payload" << resPayload;
+        if (adapterLog().isDebugEnabled()) {
+            const bool noisy = (type == QStringLiteral("grouped_light")
+                                || type == QStringLiteral("grouped_light_level"));
+            if (!noisy) {
+                const QString resPayload =
+                    QString::fromUtf8(QJsonDocument(resObj).toJson(QJsonDocument::Compact));
+                qCDebug(adapterLog).noquote()
+                    << "HueAdapter v2 event resource type" << type
+                    << "id" << resId
+                    << "payload" << resPayload;
+            }
+        }
 
         bool topologyChange = false;
         if (type == QStringLiteral("device")) {
@@ -2964,23 +2994,32 @@ void HueAdapter::handleV2RelativeRotaryResource(const QJsonObject &resObj, qint6
 
     const QJsonObject rrObj = resObj.value(QStringLiteral("relative_rotary")).toObject();
     const QJsonObject lastEvent = rrObj.value(QStringLiteral("last_event")).toObject();
-    const QJsonObject rotation = lastEvent.value(QStringLiteral("rotation")).toObject();
+    const QJsonObject reportObj = rrObj.value(QStringLiteral("rotary_report")).toObject();
+    QJsonObject rotation = lastEvent.value(QStringLiteral("rotation")).toObject();
+    if (!rotation.contains(QStringLiteral("steps")))
+        rotation = reportObj.value(QStringLiteral("rotation")).toObject();
     if (!rotation.contains(QStringLiteral("steps")))
         return;
 
-    const QString direction = rotation.value(QStringLiteral("direction")).toString();
+    QString direction = rotation.value(QStringLiteral("direction")).toString();
     int steps = rotation.value(QStringLiteral("steps")).toInt(0);
     if (steps == 0)
         return;
 
-    if (direction == QStringLiteral("counter_clock_wise")) {
+    direction = direction.trimmed().toLower();
+    if (direction == QStringLiteral("counter_clock_wise")
+        || direction == QStringLiteral("counter_clockwise")
+        || direction == QStringLiteral("ccw")) {
         steps = -steps;
-    } else if (direction != QStringLiteral("clock_wise")) {
+    } else if (direction == QStringLiteral("clock_wise")
+               || direction == QStringLiteral("clockwise")
+               || direction == QStringLiteral("cw")) {
+        // keep positive direction
+    } else {
         return;
     }
 
     qint64 eventTs = nowMs;
-    const QJsonObject reportObj = rrObj.value(QStringLiteral("rotary_report")).toObject();
     const qint64 reportTs = parseHueTimestampMs(reportObj.value(QStringLiteral("updated")).toString());
     if (reportTs > 0)
         eventTs = reportTs;
@@ -2989,6 +3028,7 @@ void HueAdapter::handleV2RelativeRotaryResource(const QJsonObject &resObj, qint6
                              QStringLiteral("dial"),
                              steps,
                              eventTs);
+    m_lastDialValueByDevice.insert(deviceExtId, steps);
 
     scheduleDialReset(deviceExtId);
 }
@@ -3011,33 +3051,6 @@ static ButtonEventCode mapHueV2ButtonEventToCode(const QString &event)
 
     // Ignore other events.
     return ButtonEventCode::None;
-}
-
-static ButtonEventCode mapHueV1ButtonEventToCode(int value)
-{
-    // Hue v1 "buttonevent" encodes the button id in the thousands/hundreds
-    // place (1000, 2000, ...) and the action in the last digit:
-    //
-    //  - x000: initial press
-    //  - x001: repeat while held
-    //  - x002: short release
-    //  - x003: long release
-    //
-    // We ignore the button index here and only normalize the action so that
-    // v1 and v2 bridges behave consistently.
-    const int action = value % 10;
-    switch (action) {
-    case 0:
-        return ButtonEventCode::InitialPress;
-    case 1:
-        return ButtonEventCode::Repeat;
-    case 2:
-        return ButtonEventCode::ShortPressRelease;
-    case 3:
-        return ButtonEventCode::LongPressRelease;
-    default:
-        return ButtonEventCode::None;
-    }
 }
 
 void HueAdapter::handleV2ButtonResource(const QJsonObject &resObj, qint64 nowMs)
@@ -3137,6 +3150,7 @@ void HueAdapter::handleV2ButtonResource(const QJsonObject &resObj, qint64 nowMs)
 
     if (code == ButtonEventCode::ShortPressRelease) {
         handleShortPressRelease(deviceExtId, channelExtId, eventTs);
+        return;
     }
 
     emit channelStateUpdated(deviceExtId,
@@ -3299,16 +3313,19 @@ void HueAdapter::scheduleDialReset(const QString &deviceExtId)
         connect(timer, &QTimer::timeout, this, [this, deviceExtId]() {
             if (m_stopping)
                 return;
+            if (m_lastDialValueByDevice.value(deviceExtId, 0) == 0)
+                return;
             const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
             emit channelStateUpdated(deviceExtId,
                                      QStringLiteral("dial"),
                                      0,
                                      nowMs);
+            m_lastDialValueByDevice.insert(deviceExtId, 0);
         });
     }
 
     timer->stop();
-    timer->start(200);
+    timer->start(700);
 }
 
 void HueAdapter::updateDeviceName(const QString &deviceExtId, const QString &name, CmdId cmdId)
@@ -4004,8 +4021,7 @@ void HueAdapter::finalizePendingShortPress(const QString &key)
     if (tracker.timer)
         tracker.timer->stop();
 
-    if (tracker.count < 2) {
-        tracker.count = 0;
+    if (tracker.count <= 0) {
         tracker.lastTs = 0;
         return;
     }
@@ -4014,6 +4030,17 @@ void HueAdapter::finalizePendingShortPress(const QString &key)
     tracker.count = 0;
     const qint64 ts = tracker.lastTs;
     tracker.lastTs = 0;
+
+    if (count == 1) {
+        if (!tracker.deviceExtId.isEmpty() &&
+            !tracker.channelExtId.isEmpty()) {
+            emit channelStateUpdated(tracker.deviceExtId,
+                                     tracker.channelExtId,
+                                     static_cast<int>(ButtonEventCode::ShortPressRelease),
+                                     ts);
+        }
+        return;
+    }
 
     ButtonEventCode aggregated = ButtonEventCode::None;
     switch (count) {
