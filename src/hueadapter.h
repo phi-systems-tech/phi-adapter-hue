@@ -205,6 +205,8 @@ private:
         QString channelExtId;
     };
     QHash<QString, ButtonMultiPressTracker> m_buttonMultiPress;
+    QHash<QString, int> m_buttonLastEventCode;
+    QHash<QString, qint64> m_buttonLastEventTs;
 };
 
 } // namespace phicore

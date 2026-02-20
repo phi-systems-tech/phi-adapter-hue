@@ -30,6 +30,7 @@ namespace {
 constexpr int kMaxConcurrentV2DeviceFetch = 4;
 constexpr int kButtonMultiPressWindowMs = 1200;
 constexpr int kButtonMultiPressResetGapMs = 500;
+constexpr int kButtonLongPressRepeatWindowMs = 800;
 constexpr int kInitialSnapshotDelayMs = 300;
 constexpr int kV2DeviceFetchSpacingMs = 20;
 constexpr int kRenameVerifyDelayMs = 700;
@@ -591,6 +592,8 @@ void HueAdapter::stop()
     m_renameVerifyTimers.clear();
     m_pendingRenameVerifications.clear();
     m_activeRenameFetches.clear();
+    m_buttonLastEventCode.clear();
+    m_buttonLastEventTs.clear();
     stopEventStream();
 
     if (m_nam) {
@@ -3077,7 +3080,7 @@ void HueAdapter::handleV2ButtonResource(const QJsonObject &resObj, qint64 nowMs)
     if (reportTs > 0)
         eventTs = reportTs;
 
-    const ButtonEventCode code = mapHueV2ButtonEventToCode(lastEvent);
+    ButtonEventCode code = mapHueV2ButtonEventToCode(lastEvent);
     if (code == ButtonEventCode::None)
         return;
 
@@ -3150,13 +3153,41 @@ void HueAdapter::handleV2ButtonResource(const QJsonObject &resObj, qint64 nowMs)
 
     if (code == ButtonEventCode::ShortPressRelease) {
         handleShortPressRelease(deviceExtId, channelExtId, eventTs);
+        m_buttonLastEventCode.remove(bindingKey);
+        m_buttonLastEventTs.remove(bindingKey);
         return;
+    }
+
+    if (code == ButtonEventCode::Repeat) {
+        const int prevCode = m_buttonLastEventCode.value(bindingKey, 0);
+        const qint64 prevTs = m_buttonLastEventTs.value(bindingKey, 0);
+        const bool hasRecentLongState =
+            (prevCode == static_cast<int>(ButtonEventCode::LongPress)
+             || prevCode == static_cast<int>(ButtonEventCode::Repeat))
+            && prevTs > 0
+            && (eventTs - prevTs) <= kButtonLongPressRepeatWindowMs;
+        if (!hasRecentLongState) {
+            emit channelStateUpdated(deviceExtId,
+                                     channelExtId,
+                                     static_cast<int>(ButtonEventCode::LongPress),
+                                     eventTs);
+            m_buttonLastEventCode.insert(bindingKey, static_cast<int>(ButtonEventCode::LongPress));
+            m_buttonLastEventTs.insert(bindingKey, eventTs);
+        }
     }
 
     emit channelStateUpdated(deviceExtId,
                              channelExtId,
                              static_cast<int>(code),
                              eventTs);
+
+    if (code == ButtonEventCode::LongPressRelease) {
+        m_buttonLastEventCode.remove(bindingKey);
+        m_buttonLastEventTs.remove(bindingKey);
+    } else {
+        m_buttonLastEventCode.insert(bindingKey, static_cast<int>(code));
+        m_buttonLastEventTs.insert(bindingKey, eventTs);
+    }
 }
 
 void HueAdapter::handleV2ZigbeeConnectivityResource(const QJsonObject &resObj, qint64 nowMs)
