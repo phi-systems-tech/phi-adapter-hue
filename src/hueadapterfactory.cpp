@@ -17,7 +17,7 @@
 #include <QSslSocket>
 #endif
 
-namespace phicore {
+namespace phicore::adapter {
 
 static const QByteArray kHueIconSvg = QByteArrayLiteral(
     "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\" role=\"img\" aria-label=\"Hue text logotype\">\n"
@@ -390,4 +390,4 @@ AdapterInterface *HueAdapterFactory::create(QObject *parent)
     return new HueAdapter(parent);
 }
 
-} // namespace phicore
+} // namespace phicore::adapter

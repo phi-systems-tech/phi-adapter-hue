@@ -49,30 +49,30 @@ int mapHueSensitivityToLevel(int raw)
 {
     switch (raw) {
     case 1:
-        return static_cast<int>(phicore::SensitivityLevel::Low);
+        return static_cast<int>(phicore::adapter::SensitivityLevel::Low);
     case 2:
-        return static_cast<int>(phicore::SensitivityLevel::Medium);
+        return static_cast<int>(phicore::adapter::SensitivityLevel::Medium);
     case 3:
-        return static_cast<int>(phicore::SensitivityLevel::High);
+        return static_cast<int>(phicore::adapter::SensitivityLevel::High);
     case 4:
-        return static_cast<int>(phicore::SensitivityLevel::VeryHigh);
+        return static_cast<int>(phicore::adapter::SensitivityLevel::VeryHigh);
     default:
-        return static_cast<int>(phicore::SensitivityLevel::Unknown);
+        return static_cast<int>(phicore::adapter::SensitivityLevel::Unknown);
     }
 }
 
 QString sensitivityLabel(int value)
 {
     switch (value) {
-    case static_cast<int>(phicore::SensitivityLevel::Low):
+    case static_cast<int>(phicore::adapter::SensitivityLevel::Low):
         return QStringLiteral("Low");
-    case static_cast<int>(phicore::SensitivityLevel::Medium):
+    case static_cast<int>(phicore::adapter::SensitivityLevel::Medium):
         return QStringLiteral("Medium");
-    case static_cast<int>(phicore::SensitivityLevel::High):
+    case static_cast<int>(phicore::adapter::SensitivityLevel::High):
         return QStringLiteral("High");
-    case static_cast<int>(phicore::SensitivityLevel::VeryHigh):
+    case static_cast<int>(phicore::adapter::SensitivityLevel::VeryHigh):
         return QStringLiteral("VeryHigh");
-    case static_cast<int>(phicore::SensitivityLevel::Max):
+    case static_cast<int>(phicore::adapter::SensitivityLevel::Max):
         return QStringLiteral("Max");
     default:
         return QString();
@@ -168,62 +168,62 @@ QString serviceRefFromMeta(const QJsonObject &meta, const QString &refKey)
     return {};
 }
 
-phicore::DeviceSoftwareUpdateStatus deviceSoftwareUpdateStatusFromString(const QString &value)
+phicore::adapter::DeviceSoftwareUpdateStatus deviceSoftwareUpdateStatusFromString(const QString &value)
 {
     const QString normalized = value.toLower();
     if (normalized.contains(QStringLiteral("up")) && normalized.contains(QStringLiteral("date")))
-        return phicore::DeviceSoftwareUpdateStatus::UpToDate;
+        return phicore::adapter::DeviceSoftwareUpdateStatus::UpToDate;
     if (normalized.contains(QStringLiteral("ready")) || normalized.contains(QStringLiteral("available")))
-        return phicore::DeviceSoftwareUpdateStatus::UpdateAvailable;
+        return phicore::adapter::DeviceSoftwareUpdateStatus::UpdateAvailable;
     if (normalized.contains(QStringLiteral("download")))
-        return phicore::DeviceSoftwareUpdateStatus::Downloading;
+        return phicore::adapter::DeviceSoftwareUpdateStatus::Downloading;
     if (normalized.contains(QStringLiteral("install")) && !normalized.contains(QStringLiteral("ready")))
-        return phicore::DeviceSoftwareUpdateStatus::Installing;
+        return phicore::adapter::DeviceSoftwareUpdateStatus::Installing;
     if (normalized.contains(QStringLiteral("reboot")) || normalized.contains(QStringLiteral("restart")))
-        return phicore::DeviceSoftwareUpdateStatus::RebootRequired;
+        return phicore::adapter::DeviceSoftwareUpdateStatus::RebootRequired;
     if (normalized.contains(QStringLiteral("fail")))
-        return phicore::DeviceSoftwareUpdateStatus::Failed;
-    return phicore::DeviceSoftwareUpdateStatus::Unknown;
+        return phicore::adapter::DeviceSoftwareUpdateStatus::Failed;
+    return phicore::adapter::DeviceSoftwareUpdateStatus::Unknown;
 }
 
-QString deviceSoftwareUpdateStatusToString(phicore::DeviceSoftwareUpdateStatus status)
+QString deviceSoftwareUpdateStatusToString(phicore::adapter::DeviceSoftwareUpdateStatus status)
 {
     switch (status) {
-    case phicore::DeviceSoftwareUpdateStatus::UpToDate:
+    case phicore::adapter::DeviceSoftwareUpdateStatus::UpToDate:
         return QStringLiteral("UpToDate");
-    case phicore::DeviceSoftwareUpdateStatus::UpdateAvailable:
+    case phicore::adapter::DeviceSoftwareUpdateStatus::UpdateAvailable:
         return QStringLiteral("UpdateAvailable");
-    case phicore::DeviceSoftwareUpdateStatus::Downloading:
+    case phicore::adapter::DeviceSoftwareUpdateStatus::Downloading:
         return QStringLiteral("Downloading");
-    case phicore::DeviceSoftwareUpdateStatus::Installing:
+    case phicore::adapter::DeviceSoftwareUpdateStatus::Installing:
         return QStringLiteral("Installing");
-    case phicore::DeviceSoftwareUpdateStatus::RebootRequired:
+    case phicore::adapter::DeviceSoftwareUpdateStatus::RebootRequired:
         return QStringLiteral("RebootRequired");
-    case phicore::DeviceSoftwareUpdateStatus::Failed:
+    case phicore::adapter::DeviceSoftwareUpdateStatus::Failed:
         return QStringLiteral("Failed");
     default:
         return QStringLiteral("Unknown");
     }
 }
 
-phicore::ConnectivityStatus connectivityStatusFromString(const QString &value)
+phicore::adapter::ConnectivityStatus connectivityStatusFromString(const QString &value)
 {
     const QString normalized = value.trimmed().toLower();
     if (normalized == QLatin1String("connected"))
-        return phicore::ConnectivityStatus::Connected;
+        return phicore::adapter::ConnectivityStatus::Connected;
     if (normalized == QLatin1String("disconnected"))
-        return phicore::ConnectivityStatus::Disconnected;
+        return phicore::adapter::ConnectivityStatus::Disconnected;
     if (normalized.contains(QStringLiteral("issue"))
         || normalized.contains(QStringLiteral("limited"))
         || normalized.contains(QStringLiteral("degraded"))) {
-        return phicore::ConnectivityStatus::Limited;
+        return phicore::adapter::ConnectivityStatus::Limited;
     }
-    return phicore::ConnectivityStatus::Unknown;
+    return phicore::adapter::ConnectivityStatus::Unknown;
 }
 
-phicore::DeviceSoftwareUpdate buildDeviceSoftwareUpdate(const QJsonObject &resObj, qint64 tsMs)
+phicore::adapter::DeviceSoftwareUpdate buildDeviceSoftwareUpdate(const QJsonObject &resObj, qint64 tsMs)
 {
-    phicore::DeviceSoftwareUpdate info;
+    phicore::adapter::DeviceSoftwareUpdate info;
     info.statusRaw = firstNonEmptyString(resObj, {QStringLiteral("state"), QStringLiteral("status")});
     info.status = deviceSoftwareUpdateStatusFromString(info.statusRaw);
     info.currentVersion = firstNonEmptyString(resObj, {
@@ -260,7 +260,7 @@ phicore::DeviceSoftwareUpdate buildDeviceSoftwareUpdate(const QJsonObject &resOb
     return info;
 }
 
-QJsonObject deviceSoftwareUpdateToJson(const phicore::DeviceSoftwareUpdate &info)
+QJsonObject deviceSoftwareUpdateToJson(const phicore::adapter::DeviceSoftwareUpdate &info)
 {
     QJsonObject obj;
     obj.insert(QStringLiteral("status"), deviceSoftwareUpdateStatusToString(info.status));
@@ -281,23 +281,23 @@ QJsonObject deviceSoftwareUpdateToJson(const phicore::DeviceSoftwareUpdate &info
     return obj;
 }
 
-phicore::DeviceClass classifyDeviceString(const QString &text)
+phicore::adapter::DeviceClass classifyDeviceString(const QString &text)
 {
     if (text.isEmpty())
-        return phicore::DeviceClass::Unknown;
+        return phicore::adapter::DeviceClass::Unknown;
     const QString lower = text.toLower();
     if (lower.contains(QStringLiteral("plug")))
-        return phicore::DeviceClass::Plug;
+        return phicore::adapter::DeviceClass::Plug;
     if (lower.contains(QStringLiteral("sensor")))
-        return phicore::DeviceClass::Sensor;
+        return phicore::adapter::DeviceClass::Sensor;
     if (lower.contains(QStringLiteral("switch")))
-        return phicore::DeviceClass::Switch;
+        return phicore::adapter::DeviceClass::Switch;
     if (lower.contains(QStringLiteral("bridge")) || lower.contains(QStringLiteral("gateway")))
-        return phicore::DeviceClass::Gateway;
-    return phicore::DeviceClass::Unknown;
+        return phicore::adapter::DeviceClass::Gateway;
+    return phicore::adapter::DeviceClass::Unknown;
 }
 
-void applyDeviceClassFromMetadata(phicore::Device &device,
+void applyDeviceClassFromMetadata(phicore::adapter::Device &device,
                                   const QJsonObject &metaObj,
                                   const QJsonObject &productObj)
 {
@@ -309,11 +309,11 @@ void applyDeviceClassFromMetadata(phicore::Device &device,
     };
 
     for (const QString &text : candidates) {
-        const phicore::DeviceClass cls = classifyDeviceString(text);
-        if (cls == phicore::DeviceClass::Unknown)
+        const phicore::adapter::DeviceClass cls = classifyDeviceString(text);
+        if (cls == phicore::adapter::DeviceClass::Unknown)
             continue;
-        if (device.deviceClass == phicore::DeviceClass::Unknown
-            || device.deviceClass == phicore::DeviceClass::Light) {
+        if (device.deviceClass == phicore::adapter::DeviceClass::Unknown
+            || device.deviceClass == phicore::adapter::DeviceClass::Light) {
             device.deviceClass = cls;
         }
         break;
@@ -339,41 +339,41 @@ QString beautifyHueEffectLabel(const QString &effect)
     return result;
 }
 
-phicore::DeviceEffect mapHueEffectName(const QString &effect)
+phicore::adapter::DeviceEffect mapHueEffectName(const QString &effect)
 {
     const QString lower = effect.toLower();
     if (lower == QStringLiteral("candle"))
-        return phicore::DeviceEffect::Candle;
+        return phicore::adapter::DeviceEffect::Candle;
     if (lower == QStringLiteral("fire") || lower == QStringLiteral("sunbeam"))
-        return phicore::DeviceEffect::Fireplace;
+        return phicore::adapter::DeviceEffect::Fireplace;
     if (lower == QStringLiteral("sparkle") || lower == QStringLiteral("glisten")
         || lower == QStringLiteral("opal") || lower == QStringLiteral("prism")
         || lower == QStringLiteral("underwater") || lower == QStringLiteral("enchant")
         || lower == QStringLiteral("cosmos"))
-        return phicore::DeviceEffect::Sparkle;
+        return phicore::adapter::DeviceEffect::Sparkle;
     if (lower == QStringLiteral("colorloop") || lower.contains(QStringLiteral("palette")))
-        return phicore::DeviceEffect::ColorLoop;
+        return phicore::adapter::DeviceEffect::ColorLoop;
     if (lower == QStringLiteral("sunrise") || lower == QStringLiteral("sunset"))
-        return phicore::DeviceEffect::Relax;
-    return phicore::DeviceEffect::CustomVendor;
+        return phicore::adapter::DeviceEffect::Relax;
+    return phicore::adapter::DeviceEffect::CustomVendor;
 }
 
-QString hueEffectNameForDeviceEffect(phicore::DeviceEffect effect)
+QString hueEffectNameForDeviceEffect(phicore::adapter::DeviceEffect effect)
 {
     switch (effect) {
-    case phicore::DeviceEffect::Candle:
+    case phicore::adapter::DeviceEffect::Candle:
         return QStringLiteral("candle");
-    case phicore::DeviceEffect::Fireplace:
+    case phicore::adapter::DeviceEffect::Fireplace:
         return QStringLiteral("fire");
-    case phicore::DeviceEffect::Sparkle:
+    case phicore::adapter::DeviceEffect::Sparkle:
         return QStringLiteral("sparkle");
-    case phicore::DeviceEffect::ColorLoop:
+    case phicore::adapter::DeviceEffect::ColorLoop:
         return QStringLiteral("colorloop");
-    case phicore::DeviceEffect::Relax:
+    case phicore::adapter::DeviceEffect::Relax:
         return QStringLiteral("sunset");
-    case phicore::DeviceEffect::Concentrate:
+    case phicore::adapter::DeviceEffect::Concentrate:
         return QStringLiteral("enchant");
-    case phicore::DeviceEffect::Alarm:
+    case phicore::adapter::DeviceEffect::Alarm:
         return QStringLiteral("prism");
     default:
         break;
@@ -381,13 +381,13 @@ QString hueEffectNameForDeviceEffect(phicore::DeviceEffect effect)
     return QString();
 }
 
-void applyHueEffects(phicore::Device &device, const QJsonObject &source)
+void applyHueEffects(phicore::adapter::Device &device, const QJsonObject &source)
 {
     if (source.isEmpty())
         return;
 
     QSet<QString> seen;
-    for (const phicore::DeviceEffectDescriptor &existing : std::as_const(device.effects)) {
+    for (const phicore::adapter::DeviceEffectDescriptor &existing : std::as_const(device.effects)) {
         seen.insert(existing.id.toLower());
         seen.insert(existing.label.toLower());
     }
@@ -406,7 +406,7 @@ void applyHueEffects(phicore::Device &device, const QJsonObject &source)
                 continue;
             seen.insert(key);
 
-            phicore::DeviceEffectDescriptor desc;
+            phicore::adapter::DeviceEffectDescriptor desc;
             desc.id = value;
             desc.label = beautifyHueEffectLabel(value);
             desc.effect = mapHueEffectName(value);
@@ -437,8 +437,8 @@ void applyHueEffects(phicore::Device &device, const QJsonObject &source)
     addEffectsFromArray(timedArr, QStringLiteral("timed_effects"));
 }
 
-bool effectsEqual(const phicore::DeviceEffectDescriptorList &lhs,
-                  const phicore::DeviceEffectDescriptorList &rhs)
+bool effectsEqual(const phicore::adapter::DeviceEffectDescriptorList &lhs,
+                  const phicore::adapter::DeviceEffectDescriptorList &rhs)
 {
     if (lhs.size() != rhs.size())
         return false;
@@ -476,7 +476,7 @@ static qint64 parseHueTimestampMs(const QString &isoText)
     return dt.toMSecsSinceEpoch();
 }
 
-namespace phicore {
+namespace phicore::adapter {
 
 HueAdapter::HueAdapter(QObject *parent)
     : AdapterInterface(parent)
@@ -2221,10 +2221,10 @@ void HueAdapter::buildDevicesFromV2Snapshots()
                         sensitivity.flags = ChannelFlagDefaultRead;
                         sensitivity.meta.insert(QStringLiteral("enumName"), QStringLiteral("SensitivityLevel"));
                         const int values[] = {
-                            static_cast<int>(phicore::SensitivityLevel::Low),
-                            static_cast<int>(phicore::SensitivityLevel::Medium),
-                            static_cast<int>(phicore::SensitivityLevel::High),
-                            static_cast<int>(phicore::SensitivityLevel::VeryHigh),
+                            static_cast<int>(phicore::adapter::SensitivityLevel::Low),
+                            static_cast<int>(phicore::adapter::SensitivityLevel::Medium),
+                            static_cast<int>(phicore::adapter::SensitivityLevel::High),
+                            static_cast<int>(phicore::adapter::SensitivityLevel::VeryHigh),
                         };
                         for (const int value : values) {
                             AdapterConfigOption opt;
@@ -2830,7 +2830,7 @@ void HueAdapter::handleV2MotionResource(const QJsonObject &resObj, qint64 nowMs)
     if (sensitivityObj.contains(QStringLiteral("sensitivity"))) {
         const int raw = sensitivityObj.value(QStringLiteral("sensitivity")).toInt(0);
         const int mapped = mapHueSensitivityToLevel(raw);
-        if (mapped != static_cast<int>(phicore::SensitivityLevel::Unknown)) {
+        if (mapped != static_cast<int>(phicore::adapter::SensitivityLevel::Unknown)) {
             emit channelStateUpdated(deviceExtId,
                                      QStringLiteral("motion_sensitivity"),
                                      mapped,
@@ -3454,7 +3454,7 @@ bool HueAdapter::updateDeviceConnectivityMeta(const QString &deviceExternalId,
     }
 
     const QString status = resObj.value(QStringLiteral("status")).toString().trimmed();
-    const phicore::ConnectivityStatus statusEnum = connectivityStatusFromString(status);
+    const phicore::adapter::ConnectivityStatus statusEnum = connectivityStatusFromString(status);
     auto queueForLater = [this, deviceExternalId, statusValue = statusEnum]() {
         m_pendingConnectivityStatus.insert(deviceExternalId, statusValue);
     };
@@ -3518,8 +3518,8 @@ bool HueAdapter::updateDeviceSoftwareUpdateMeta(const QString &deviceExternalId,
         metaChanged = true;
     }
 
-    phicore::DeviceSoftwareUpdate info = buildDeviceSoftwareUpdate(resObj, tsMs);
-    const bool hasInfo = info.status != phicore::DeviceSoftwareUpdateStatus::Unknown
+    phicore::adapter::DeviceSoftwareUpdate info = buildDeviceSoftwareUpdate(resObj, tsMs);
+    const bool hasInfo = info.status != phicore::adapter::DeviceSoftwareUpdateStatus::Unknown
         || !info.currentVersion.isEmpty()
         || !info.targetVersion.isEmpty()
         || !info.message.isEmpty()
@@ -4427,4 +4427,4 @@ void HueAdapter::buildGroupsFromV2Snapshot()
 }
 
 
-} // namespace phicore
+} // namespace phicore::adapter

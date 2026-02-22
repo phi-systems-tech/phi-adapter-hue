@@ -14,7 +14,7 @@
 #include "adapterinterface.h"
 #include "scene.h"
 
-namespace phicore {
+namespace phicore::adapter {
 
 class HueAdapter : public AdapterInterface
 {
@@ -170,7 +170,7 @@ private:
     QHash<QString, ChannelList>    m_v2DeviceChannels;
     QHash<QString, QString>        m_v2ResourceToDevice;
     QHash<QString, QString>        m_deviceToLightResource;
-    QHash<QString, phicore::ConnectivityStatus> m_pendingConnectivityStatus;
+    QHash<QString, phicore::adapter::ConnectivityStatus> m_pendingConnectivityStatus;
     QHash<QString, QJsonObject>    m_pendingDeviceSoftwareUpdates;
     QSet<QString>                  m_pendingDiscoveryDeviceUpdates;
     QHash<QString, QStringList>    m_v2RoomMemberships;
@@ -209,4 +209,4 @@ private:
     QHash<QString, qint64> m_buttonLastEventTs;
 };
 
-} // namespace phicore
+} // namespace phicore::adapter
