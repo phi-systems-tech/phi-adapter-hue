@@ -19,6 +19,26 @@
 
 namespace phicore::adapter {
 
+namespace {
+
+void applyDefaultFieldScopes(AdapterConfigSchema &schema)
+{
+    for (AdapterConfigField &field : schema.fields) {
+        const QString scope = field.meta.value(QStringLiteral("scope")).toString().trimmed().toLower();
+        if (scope == QStringLiteral("factory")
+            || scope == QStringLiteral("instance")
+            || scope == QStringLiteral("both")) {
+            continue;
+        }
+        const bool instanceOnly =
+            (static_cast<int>(field.flags) & static_cast<int>(AdapterConfigFieldFlag::InstanceOnly)) != 0;
+        field.meta.insert(QStringLiteral("scope"),
+                          instanceOnly ? QStringLiteral("instance") : QStringLiteral("both"));
+    }
+}
+
+} // namespace
+
 static const QByteArray kHueIconSvg = QByteArrayLiteral(
     "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\" role=\"img\" aria-label=\"Hue text logotype\">\n"
     "  <defs>\n"
@@ -60,11 +80,17 @@ AdapterCapabilities HueAdapterFactory::capabilities() const
     discoveryAction.id          = QStringLiteral("startDeviceDiscovery");
     discoveryAction.label       = QStringLiteral("Search for Hue devices");
     discoveryAction.description = QStringLiteral("Trigger the bridge to enter device discovery mode.");
+    discoveryAction.meta.insert(QStringLiteral("placement"), QStringLiteral("card"));
+    discoveryAction.meta.insert(QStringLiteral("kind"), QStringLiteral("command"));
+    discoveryAction.meta.insert(QStringLiteral("requiresAck"), true);
     caps.instanceActions.push_back(discoveryAction);
     AdapterActionDescriptor probeAction;
     probeAction.id = QStringLiteral("probe");
     probeAction.label = QStringLiteral("Test connection");
     probeAction.description = QStringLiteral("Reachability & credentials check");
+    probeAction.meta.insert(QStringLiteral("placement"), QStringLiteral("card"));
+    probeAction.meta.insert(QStringLiteral("kind"), QStringLiteral("command"));
+    probeAction.meta.insert(QStringLiteral("requiresAck"), true);
     caps.factoryActions.push_back(probeAction);
     return caps;
 }
@@ -158,6 +184,7 @@ AdapterConfigSchema HueAdapterFactory::configSchema(const Adapter &info) const
         schema.fields.push_back(f);
     }
 
+    applyDefaultFieldScopes(schema);
     return schema;
 }
 
