@@ -21,20 +21,13 @@ namespace phicore::adapter {
 
 namespace {
 
-void applyDefaultFieldScopes(AdapterConfigSchema &schema)
+void addFieldByLegacyScope(AdapterConfigSchema &schema, const AdapterConfigField &field)
 {
-    for (AdapterConfigField &field : schema.fields) {
-        const QString scope = field.meta.value(QStringLiteral("scope")).toString().trimmed().toLower();
-        if (scope == QStringLiteral("factory")
-            || scope == QStringLiteral("instance")
-            || scope == QStringLiteral("both")) {
-            continue;
-        }
-        const bool instanceOnly =
-            (static_cast<int>(field.flags) & static_cast<int>(AdapterConfigFieldFlag::InstanceOnly)) != 0;
-        field.meta.insert(QStringLiteral("scope"),
-                          instanceOnly ? QStringLiteral("instance") : QStringLiteral("both"));
-    }
+    const bool instanceOnly =
+        (static_cast<int>(field.flags) & static_cast<int>(AdapterConfigFieldFlag::InstanceOnly)) != 0;
+    if (!instanceOnly)
+        schema.factory.fields.push_back(field);
+    schema.instance.fields.push_back(field);
 }
 
 } // namespace
@@ -122,8 +115,10 @@ discovery::DiscoveryQueryList HueAdapterFactory::discoveryQueries() const
 AdapterConfigSchema HueAdapterFactory::configSchema(const Adapter &info) const
 {
     AdapterConfigSchema schema;
-    schema.title       = QStringLiteral("Philips Hue Bridge");
-    schema.description = QStringLiteral("Configure connection to a Philips Hue bridge.");
+    schema.factory.title       = QStringLiteral("Philips Hue Bridge");
+    schema.factory.description = QStringLiteral("Configure connection to a Philips Hue bridge.");
+    schema.instance.title = schema.factory.title;
+    schema.instance.description = schema.factory.description;
 
     // Host
     {
@@ -136,7 +131,7 @@ AdapterConfigSchema HueAdapterFactory::configSchema(const Adapter &info) const
         f.placeholder = QStringLiteral("192.168.1.50");
         if (!info.host.isEmpty())
             f.defaultValue = info.host;
-        schema.fields.push_back(f);
+        addFieldByLegacyScope(schema, f);
     }
 
     // Port (optional)
@@ -147,7 +142,7 @@ AdapterConfigSchema HueAdapterFactory::configSchema(const Adapter &info) const
         f.label       = QStringLiteral("Port");
         f.description = QStringLiteral("TCP port for the Hue API (80 or 443).");
         f.defaultValue = info.port > 0 ? info.port : 443;
-        schema.fields.push_back(f);
+        addFieldByLegacyScope(schema, f);
     }
 
     // Use TLS
@@ -159,7 +154,7 @@ AdapterConfigSchema HueAdapterFactory::configSchema(const Adapter &info) const
         f.description = QStringLiteral("Use HTTPS when talking to the Hue API.");
         if (info.flags.testFlag(AdapterFlag::AdapterFlagUseTls))
             f.defaultValue = true;
-        schema.fields.push_back(f);
+        addFieldByLegacyScope(schema, f);
     }
 
     // AppKey (can be filled after pairing)
@@ -170,7 +165,7 @@ AdapterConfigSchema HueAdapterFactory::configSchema(const Adapter &info) const
         f.label       = QStringLiteral("Application Key");
         f.description = QStringLiteral("Hue API application key (created by link button pairing).");
         f.flags       = AdapterConfigFieldFlag::Secret;
-        schema.fields.push_back(f);
+        addFieldByLegacyScope(schema, f);
     }
 
     // Retry interval for eventstream reconnects
@@ -181,10 +176,9 @@ AdapterConfigSchema HueAdapterFactory::configSchema(const Adapter &info) const
         f.label       = QStringLiteral("Retry interval");
         f.description = QStringLiteral("Reconnect interval while the bridge is offline.");
         f.defaultValue = 10000;
-        schema.fields.push_back(f);
+        addFieldByLegacyScope(schema, f);
     }
 
-    applyDefaultFieldScopes(schema);
     return schema;
 }
 
