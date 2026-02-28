@@ -19,19 +19,6 @@
 
 namespace phicore::adapter {
 
-namespace {
-
-void addFieldByLegacyScope(AdapterConfigSchema &schema, const AdapterConfigField &field)
-{
-    const bool instanceOnly =
-        (static_cast<int>(field.flags) & static_cast<int>(AdapterConfigFieldFlag::InstanceOnly)) != 0;
-    if (!instanceOnly)
-        schema.factory.fields.push_back(field);
-    schema.instance.fields.push_back(field);
-}
-
-} // namespace
-
 static const QByteArray kHueIconSvg = QByteArrayLiteral(
     "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\" role=\"img\" aria-label=\"Hue text logotype\">\n"
     "  <defs>\n"
@@ -131,7 +118,7 @@ AdapterConfigSchema HueAdapterFactory::configSchema(const Adapter &info) const
         f.placeholder = QStringLiteral("192.168.1.50");
         if (!info.host.isEmpty())
             f.defaultValue = info.host;
-        addFieldByLegacyScope(schema, f);
+        schema.factory.fields.push_back(f);
     }
 
     // Port (optional)
@@ -142,7 +129,7 @@ AdapterConfigSchema HueAdapterFactory::configSchema(const Adapter &info) const
         f.label       = QStringLiteral("Port");
         f.description = QStringLiteral("TCP port for the Hue API (80 or 443).");
         f.defaultValue = info.port > 0 ? info.port : 443;
-        addFieldByLegacyScope(schema, f);
+        schema.factory.fields.push_back(f);
     }
 
     // Use TLS
@@ -154,7 +141,7 @@ AdapterConfigSchema HueAdapterFactory::configSchema(const Adapter &info) const
         f.description = QStringLiteral("Use HTTPS when talking to the Hue API.");
         if (info.flags.testFlag(AdapterFlag::AdapterFlagUseTls))
             f.defaultValue = true;
-        addFieldByLegacyScope(schema, f);
+        schema.factory.fields.push_back(f);
     }
 
     // AppKey (can be filled after pairing)
@@ -165,7 +152,7 @@ AdapterConfigSchema HueAdapterFactory::configSchema(const Adapter &info) const
         f.label       = QStringLiteral("Application Key");
         f.description = QStringLiteral("Hue API application key (created by link button pairing).");
         f.flags       = AdapterConfigFieldFlag::Secret;
-        addFieldByLegacyScope(schema, f);
+        schema.factory.fields.push_back(f);
     }
 
     // Retry interval for eventstream reconnects
@@ -176,7 +163,7 @@ AdapterConfigSchema HueAdapterFactory::configSchema(const Adapter &info) const
         f.label       = QStringLiteral("Retry interval");
         f.description = QStringLiteral("Reconnect interval while the bridge is offline.");
         f.defaultValue = 10000;
-        addFieldByLegacyScope(schema, f);
+        schema.factory.fields.push_back(f);
     }
 
     return schema;
