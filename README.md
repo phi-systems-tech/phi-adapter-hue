@@ -2,21 +2,22 @@
 
 ## Overview
 
-Integrates Philips Hue Bridge devices with phi-core.
+Integrates Philips Hue Bridge devices with phi-core via IPC sidecar.
 
 ## Supported Devices / Systems
 
 - Philips Hue Bridge (local LAN API)
-- Devices exposed by the bridge
+- Hue lights exposed by bridge resource API v2
 
 ## Cloud Functionality
 
-- Cloud required: `optional`
-- Primary operation is local via bridge; optional cloud-assisted discovery may be used
+- Cloud required: `no`
+- Local bridge integration only
 
 ## Known Issues
 
-- Pairing requires pressing the physical bridge link button in time.
+- Pairing still requires pressing the physical bridge link button.
+- Color state roundtrip is limited (write supported; live color readback depends on scalar transport).
 
 ## License
 
@@ -28,29 +29,37 @@ See `LICENSE`.
 
 ### Purpose
 
-Provides a Hue adapter plugin for bridge discovery, pairing, and runtime control.
+Provides a Philips Hue IPC sidecar adapter using `phi-adapter-sdk`.
 
 ### Features
 
-- mDNS + manual bridge discovery paths
-- Pairing/token workflow
-- Logging category `phi-core.adapters.hue`
+- IPC sidecar executable (`phi_adapter_hue_ipc`)
+- Descriptor-driven config schema (`configSchema`) sent during bootstrap
+- Factory action `probe` (`Test connection`) with pairing support
+- Instance action `startDeviceDiscovery`
+- Poll-based v2 snapshot sync (`device`, `light`, `room`, `zone`, `scene`)
 
 ### Runtime Requirements
 
-- phi-core with plugin loading enabled
-- Network access to Hue Bridge
+- phi-core with IPC adapter runtime enabled
+- Network access to Hue Bridge endpoint
 
 ### Build Requirements
 
 - `cmake`
 - Qt6 modules: `Core`, `Network`
-- `phi-adapter-api` (local checkout or installed package)
+- `phi-adapter-sdk` (local checkout in `../phi-adapter-sdk` or installed package)
 
 ### Configuration
 
-- Config file deployed with plugin: `hue-config.json`
-- Bridge host/token details are managed through phi-core adapter configuration
+Adapter settings are configured through phi-core:
+
+- `host`
+- `port`
+- `useTls`
+- `appKey`
+- `pollIntervalMs`
+- `retryIntervalMs`
 
 ### Build
 
@@ -61,15 +70,14 @@ cmake --build build --parallel
 
 ### Installation
 
-- Build output: `build/plugins/adapters/libphi_adapter_hue.so`
+- Build output: `build/plugins/adapters/phi_adapter_hue_ipc`
 - Deploy to: `/opt/phi/plugins/adapters/`
-- Also deploy: `hue-config.json`
 
 ### Troubleshooting
 
-- Error: pairing/token request rejected
-- Cause: link button not pressed or stale bridge/token state
-- Fix: trigger bridge link mode and retry
+- Error: `Press the link button on the Hue bridge, then retry.`
+- Cause: bridge not in pairing mode
+- Fix: press bridge link button and run `Test connection` again
 
 ### Maintainers
 
