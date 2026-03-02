@@ -184,7 +184,7 @@ QString effectMetaValue(const v1::DeviceEffectDescriptor &descriptor, const QStr
 } // namespace
 
 HueSidecar::HueSidecar()
-    : m_http(&m_network)
+    : m_http(&m_requestNetwork)
 {
 }
 
@@ -666,7 +666,7 @@ void HueSidecar::startEventStream()
     }
 #endif
 
-    m_eventStreamReply = m_network.get(request);
+    m_eventStreamReply = m_eventStreamNetwork.get(request);
     if (!m_eventStreamReply) {
         m_nextEventStreamRetryDueMs = nowMs() + std::max(1000, m_retryIntervalMs);
     }

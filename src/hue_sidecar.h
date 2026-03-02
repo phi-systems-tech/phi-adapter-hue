@@ -84,7 +84,8 @@ private:
     CmdResponse failureResponse(std::uint64_t cmdId, CmdStatus status, const QString &error) const;
     CmdResponse successResponse(std::uint64_t cmdId) const;
 
-    QNetworkAccessManager m_network;
+    QNetworkAccessManager m_requestNetwork;
+    QNetworkAccessManager m_eventStreamNetwork;
     HttpClient m_http;
 
     phicore::adapter::v1::Adapter m_adapterInfo;
