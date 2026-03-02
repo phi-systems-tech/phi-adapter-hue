@@ -8,6 +8,7 @@
 
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSet>
 
 namespace phicore::hue::ipc {
 
@@ -109,6 +110,98 @@ v1::Channel makeColorChannel(const QJsonObject &colorObj)
     }
 
     return channel;
+}
+
+QString beautifyHueEffectLabel(const QString &effect)
+{
+    if (effect.isEmpty())
+        return effect;
+
+    QString label = effect;
+    label.replace(QLatin1Char('_'), QLatin1Char(' '));
+    label.replace(QLatin1Char('-'), QLatin1Char(' '));
+    const QString lower = label.toLower();
+    QString result;
+    result.reserve(lower.size());
+    for (int i = 0; i < lower.size(); ++i) {
+        if (i == 0 || lower.at(i - 1).isSpace())
+            result.append(lower.at(i).toUpper());
+        else
+            result.append(lower.at(i));
+    }
+    return result;
+}
+
+v1::DeviceEffect mapHueEffectName(const QString &effect)
+{
+    const QString lower = effect.toLower();
+    if (lower == QStringLiteral("candle"))
+        return v1::DeviceEffect::Candle;
+    if (lower == QStringLiteral("fire") || lower == QStringLiteral("sunbeam"))
+        return v1::DeviceEffect::Fireplace;
+    if (lower == QStringLiteral("sparkle") || lower == QStringLiteral("glisten")
+        || lower == QStringLiteral("opal") || lower == QStringLiteral("prism")
+        || lower == QStringLiteral("underwater") || lower == QStringLiteral("enchant")
+        || lower == QStringLiteral("cosmos")) {
+        return v1::DeviceEffect::Sparkle;
+    }
+    if (lower == QStringLiteral("colorloop") || lower.contains(QStringLiteral("palette")))
+        return v1::DeviceEffect::ColorLoop;
+    if (lower == QStringLiteral("sunrise") || lower == QStringLiteral("sunset"))
+        return v1::DeviceEffect::Relax;
+    return v1::DeviceEffect::CustomVendor;
+}
+
+void applyHueEffects(v1::Device *device, const QJsonObject &source)
+{
+    if (!device || source.isEmpty())
+        return;
+
+    QSet<QString> seen;
+    for (const v1::DeviceEffectDescriptor &existing : device->effects) {
+        seen.insert(QString::fromStdString(existing.id).toLower());
+    }
+
+    auto addEffectsFromArray = [&](const QJsonArray &array, const QString &category) {
+        for (const QJsonValue &val : array) {
+            if (!val.isString())
+                continue;
+            const QString value = val.toString().trimmed();
+            if (value.isEmpty())
+                continue;
+            const QString key = value.toLower();
+            if (key == QStringLiteral("no_effect") || seen.contains(key))
+                continue;
+            seen.insert(key);
+
+            v1::DeviceEffectDescriptor descriptor;
+            descriptor.effect = mapHueEffectName(value);
+            descriptor.id = value.toStdString();
+            const QString label = beautifyHueEffectLabel(value);
+            descriptor.label = label.toStdString();
+            descriptor.description = QStringLiteral("Hue effect %1").arg(label).toStdString();
+
+            QJsonObject meta;
+            meta.insert(QStringLiteral("hueEffect"), value);
+            meta.insert(QStringLiteral("hueEffectCategory"), category);
+            descriptor.metaJson = QJsonDocument(meta).toJson(QJsonDocument::Compact).toStdString();
+
+            device->effects.push_back(std::move(descriptor));
+        }
+    };
+
+    const QJsonArray effectsArr = source.value(QStringLiteral("effects")).toObject()
+                                      .value(QStringLiteral("effect_values")).toArray();
+    addEffectsFromArray(effectsArr, QStringLiteral("effects"));
+
+    const QJsonArray effectsV2Arr = source.value(QStringLiteral("effects_v2")).toObject()
+                                        .value(QStringLiteral("action")).toObject()
+                                        .value(QStringLiteral("effect_values")).toArray();
+    addEffectsFromArray(effectsV2Arr, QStringLiteral("effects"));
+
+    const QJsonArray timedEffectsArr = source.value(QStringLiteral("timed_effects")).toObject()
+                                           .value(QStringLiteral("effect_values")).toArray();
+    addEffectsFromArray(timedEffectsArr, QStringLiteral("timed_effects"));
 }
 
 QString ownerDeviceId(const QJsonObject &resourceObj)
@@ -267,6 +360,21 @@ v1::Channel makeButtonChannel(const QString &channelId,
     return channel;
 }
 
+v1::Channel makeDialRotationChannel(std::optional<std::int64_t> value)
+{
+    v1::Channel channel;
+    channel.externalId = "dial";
+    channel.name = "Dial rotation";
+    channel.kind = v1::ChannelKind::RelativeRotation;
+    channel.dataType = v1::ChannelDataType::Int;
+    channel.flags = v1::kChannelFlagDefaultRead;
+    if (value.has_value()) {
+        channel.hasValue = true;
+        channel.lastValue = *value;
+    }
+    return channel;
+}
+
 v1::Channel makeConnectivityChannel(std::optional<std::int64_t> value)
 {
     v1::Channel channel;
@@ -411,22 +519,6 @@ std::optional<std::int64_t> parseConnectivityStatus(const QJsonObject &resourceO
     return std::nullopt;
 }
 
-std::optional<std::int64_t> mapButtonEventCode(const QString &eventRaw)
-{
-    const QString event = eventRaw.trimmed().toLower();
-    if (event == QLatin1String("initial_press"))
-        return static_cast<std::int64_t>(v1::ButtonEventCode::InitialPress);
-    if (event == QLatin1String("long_press"))
-        return static_cast<std::int64_t>(v1::ButtonEventCode::LongPress);
-    if (event == QLatin1String("repeat"))
-        return static_cast<std::int64_t>(v1::ButtonEventCode::Repeat);
-    if (event == QLatin1String("short_release"))
-        return static_cast<std::int64_t>(v1::ButtonEventCode::ShortPressRelease);
-    if (event == QLatin1String("long_release"))
-        return static_cast<std::int64_t>(v1::ButtonEventCode::LongPressRelease);
-    return std::nullopt;
-}
-
 bool parseHexColor(const QString &hex, double *r01, double *g01, double *b01)
 {
     QString text = hex.trimmed();
@@ -522,6 +614,7 @@ Snapshot buildSnapshot(const QJsonArray &deviceData,
                        const QJsonArray &lightLevelData,
                        const QJsonArray &devicePowerData,
                        const QJsonArray &buttonData,
+                       const QJsonArray &relativeRotaryData,
                        const QJsonArray &zigbeeConnectivityData,
                        const QJsonArray &roomData,
                        const QJsonArray &zoneData,
@@ -547,6 +640,7 @@ Snapshot buildSnapshot(const QJsonArray &deviceData,
         deviceEntry.device.firmware = product.value(QStringLiteral("software_version")).toString().toStdString();
         deviceEntry.device.deviceClass = v1::DeviceClass::Unknown;
         deviceEntry.device.metaJson = QJsonDocument(deviceObj).toJson(QJsonDocument::Compact).toStdString();
+        applyHueEffects(&deviceEntry.device, deviceObj);
 
         snapshot.devices.insert(deviceId, std::move(deviceEntry));
     }
@@ -603,6 +697,8 @@ Snapshot buildSnapshot(const QJsonArray &deviceData,
             device.state.colorY = xyObj.value(QStringLiteral("y")).toDouble(0.0);
             upsertChannel(&device.channels, makeColorChannel(colorObj));
         }
+
+        applyHueEffects(&device.device, lightObj);
     }
 
     for (const QJsonValue &entry : motionData) {
@@ -687,7 +783,6 @@ Snapshot buildSnapshot(const QJsonArray &deviceData,
 
     struct ButtonEntry {
         int controlId = 0;
-        std::optional<std::int64_t> eventCode;
     };
     QHash<QString, std::vector<ButtonEntry>> buttonsByDevice;
 
@@ -702,16 +797,8 @@ Snapshot buildSnapshot(const QJsonArray &deviceData,
         const QJsonObject metadataObj = buttonObj.value(QStringLiteral("metadata")).toObject();
         const int controlId = metadataObj.value(QStringLiteral("control_id")).toInt(0);
 
-        const QJsonObject buttonStateObj = buttonObj.value(QStringLiteral("button")).toObject();
-        QString event = buttonStateObj.value(QStringLiteral("last_event")).toString();
-        if (event.isEmpty()) {
-            const QJsonObject reportObj = buttonStateObj.value(QStringLiteral("button_report")).toObject();
-            event = reportObj.value(QStringLiteral("event")).toString();
-        }
-
         ButtonEntry mapped;
         mapped.controlId = controlId;
-        mapped.eventCode = mapButtonEventCode(event);
         buttonsByDevice[deviceId].push_back(std::move(mapped));
     }
 
@@ -734,8 +821,46 @@ Snapshot buildSnapshot(const QJsonArray &deviceData,
             upsertChannel(&device.channels,
                           makeButtonChannel(channelId,
                                             channelName,
-                                            entry.eventCode));
+                                            std::nullopt));
         }
+    }
+
+    QSet<QString> rotaryByDevice;
+
+    // Legacy parity: derive dial capability from device services even if
+    // /resource/relative_rotary is unavailable or delayed.
+    for (const QJsonValue &entry : deviceData) {
+        if (!entry.isObject())
+            continue;
+        const QJsonObject deviceObj = entry.toObject();
+        const QString deviceId = deviceObj.value(QStringLiteral("id")).toString().trimmed();
+        if (deviceId.isEmpty())
+            continue;
+        const QJsonArray services = deviceObj.value(QStringLiteral("services")).toArray();
+        for (const QJsonValue &serviceVal : services) {
+            if (!serviceVal.isObject())
+                continue;
+            const QJsonObject serviceObj = serviceVal.toObject();
+            if (serviceObj.value(QStringLiteral("rtype")).toString() == QLatin1String("relative_rotary")) {
+                rotaryByDevice.insert(deviceId);
+                break;
+            }
+        }
+    }
+
+    for (const QJsonValue &entry : relativeRotaryData) {
+        if (!entry.isObject())
+            continue;
+        const QJsonObject rotaryObj = entry.toObject();
+        const QString deviceId = ownerDeviceId(rotaryObj);
+        if (deviceId.isEmpty())
+            continue;
+        rotaryByDevice.insert(deviceId);
+    }
+
+    for (const QString &deviceId : rotaryByDevice) {
+        DeviceEntry &device = ensureDevice(&snapshot, deviceId, v1::DeviceClass::Button);
+        upsertChannel(&device.channels, makeDialRotationChannel(std::nullopt));
     }
 
     for (const QJsonValue &entry : zigbeeConnectivityData) {

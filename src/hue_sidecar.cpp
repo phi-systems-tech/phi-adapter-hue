@@ -9,6 +9,13 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QUrl>
+#if QT_CONFIG(ssl)
+#include <QSslConfiguration>
+#include <QSslSocket>
+#endif
 
 #include "hue_probe.h"
 #include "hue_schema.h"
@@ -19,6 +26,32 @@ namespace {
 
 namespace v1 = phicore::adapter::v1;
 namespace sdk = phicore::adapter::sdk;
+
+constexpr int kButtonMultiPressWindowMs = 1300;
+constexpr int kButtonLongPressRepeatWindowMs = 800;
+constexpr int kDialResetDelayMs = 1500;
+constexpr int kEventStreamFastRetryMs = 2000;
+constexpr int kEventStreamFastRetryAttempts = 5;
+
+QString channelBindingKey(const QString &deviceExternalId, const QString &channelExternalId)
+{
+    return deviceExternalId + QLatin1Char('|') + channelExternalId;
+}
+
+qint64 parseHueTimestampMs(const QString &isoText)
+{
+    if (isoText.isEmpty())
+        return 0;
+
+    QDateTime dt = QDateTime::fromString(isoText, Qt::ISODateWithMs);
+    if (!dt.isValid())
+        dt = QDateTime::fromString(isoText, Qt::ISODate);
+    if (!dt.isValid())
+        return 0;
+    if (dt.timeSpec() != Qt::UTC)
+        dt = dt.toUTC();
+    return dt.toMSecsSinceEpoch();
+}
 
 std::optional<double> scalarAsDouble(const v1::ScalarValue &value)
 {
@@ -75,6 +108,79 @@ int readInt(const QJsonObject &obj, const QString &key, int fallback)
     return ok ? value : fallback;
 }
 
+v1::ButtonEventCode mapHueButtonEvent(const QString &eventRaw)
+{
+    const QString event = eventRaw.trimmed().toLower();
+    if (event == QLatin1String("initial_press"))
+        return v1::ButtonEventCode::InitialPress;
+    if (event == QLatin1String("long_press"))
+        return v1::ButtonEventCode::LongPress;
+    if (event == QLatin1String("repeat"))
+        return v1::ButtonEventCode::Repeat;
+    if (event == QLatin1String("short_release"))
+        return v1::ButtonEventCode::ShortPressRelease;
+    if (event == QLatin1String("long_release"))
+        return v1::ButtonEventCode::LongPressRelease;
+    return v1::ButtonEventCode::None;
+}
+
+std::optional<std::int64_t> parseConnectivityStatus(const QJsonObject &resourceObj)
+{
+    const QString status = resourceObj.value(QStringLiteral("status")).toString().trimmed().toLower();
+    if (status == QLatin1String("connected"))
+        return static_cast<std::int64_t>(v1::ConnectivityStatus::Connected);
+    if (status == QLatin1String("disconnected"))
+        return static_cast<std::int64_t>(v1::ConnectivityStatus::Disconnected);
+    if (status.contains(QStringLiteral("issue"))
+        || status.contains(QStringLiteral("limited"))
+        || status.contains(QStringLiteral("degraded"))) {
+        return static_cast<std::int64_t>(v1::ConnectivityStatus::Limited);
+    }
+    if (!status.isEmpty())
+        return static_cast<std::int64_t>(v1::ConnectivityStatus::Unknown);
+    return std::nullopt;
+}
+
+QString hueEffectNameForDeviceEffect(v1::DeviceEffect effect)
+{
+    switch (effect) {
+    case v1::DeviceEffect::Candle:
+        return QStringLiteral("candle");
+    case v1::DeviceEffect::Fireplace:
+        return QStringLiteral("fire");
+    case v1::DeviceEffect::Sparkle:
+        return QStringLiteral("sparkle");
+    case v1::DeviceEffect::ColorLoop:
+        return QStringLiteral("colorloop");
+    case v1::DeviceEffect::Relax:
+        return QStringLiteral("sunset");
+    case v1::DeviceEffect::Concentrate:
+        return QStringLiteral("enchant");
+    case v1::DeviceEffect::Alarm:
+        return QStringLiteral("prism");
+    default:
+        break;
+    }
+    return {};
+}
+
+QJsonObject parseJsonObject(const std::string &json)
+{
+    const QByteArray bytes = QByteArray::fromStdString(json).trimmed();
+    if (bytes.isEmpty())
+        return {};
+    const QJsonDocument doc = QJsonDocument::fromJson(bytes);
+    if (!doc.isObject())
+        return {};
+    return doc.object();
+}
+
+QString effectMetaValue(const v1::DeviceEffectDescriptor &descriptor, const QString &key)
+{
+    const QJsonObject meta = parseJsonObject(descriptor.metaJson);
+    return meta.value(key).toString().trimmed();
+}
+
 } // namespace
 
 HueSidecar::HueSidecar()
@@ -84,10 +190,18 @@ HueSidecar::HueSidecar()
 
 void HueSidecar::tick()
 {
-    if (!m_hasBootstrap)
+    if (!m_runtimeConfigured)
         return;
 
     const std::int64_t now = nowMs();
+    processPendingButtonAggregates(now);
+    pumpEventStream(now);
+    processPendingButtonAggregates(now);
+    processPendingDialResets(now);
+
+    if (!m_eventStreamReply && now >= m_nextEventStreamRetryDueMs)
+        startEventStream();
+
     if (m_nextPollDueMs > now)
         return;
 
@@ -103,16 +217,27 @@ void HueSidecar::tick()
         return;
     }
 
-    m_nextPollDueMs = now + std::max(1000, m_pollIntervalMs);
+    const int pollInterval = m_eventStreamActive
+        ? std::max(m_pollIntervalMs, 60000)
+        : m_pollIntervalMs;
+    m_nextPollDueMs = now + std::max(1000, pollInterval);
 }
 
 void HueSidecar::onConnected()
 {
     std::cerr << "hue-ipc connected" << '\n';
+    if (m_runtimeConfigured)
+        startEventStream();
 }
 
 void HueSidecar::onDisconnected()
 {
+    m_runtimeConfigured = false;
+    stopEventStream();
+    m_buttonMultiPress.clear();
+    m_buttonLastEventCode.clear();
+    m_buttonLastEventTs.clear();
+    m_dialResetDueMs.clear();
     setConnectionState(false);
     std::cerr << "hue-ipc disconnected" << '\n';
 }
@@ -120,13 +245,36 @@ void HueSidecar::onDisconnected()
 void HueSidecar::onBootstrap(const sdk::BootstrapRequest &request)
 {
     AdapterSidecar::onBootstrap(request);
-    applyBootstrapAdapter(request.adapter);
-    m_hasBootstrap = true;
+    m_runtimeConfigured = false;
     m_nextPollDueMs = 0;
+    m_nextEventStreamRetryDueMs = 0;
+    m_eventStreamRetryCount = 0;
+    m_buttonMultiPress.clear();
+    m_buttonLastEventCode.clear();
+    m_buttonLastEventTs.clear();
+    m_lastDialValueByDevice.clear();
+    m_dialResetDueMs.clear();
+    stopEventStream();
 
     std::cerr << "hue-ipc bootstrap adapterId=" << request.adapterId
               << " externalId=" << request.adapter.externalId
-              << " host=" << m_settings.host.toStdString()
+              << '\n';
+}
+
+void HueSidecar::onConfigChanged(const sdk::ConfigChangedRequest &request)
+{
+    AdapterSidecar::onConfigChanged(request);
+    applyRuntimeConfig(request);
+    m_runtimeConfigured = true;
+    m_nextPollDueMs = 0;
+    m_nextEventStreamRetryDueMs = 0;
+    m_eventStreamRetryCount = 0;
+    stopEventStream();
+    startEventStream();
+
+    std::cerr << "hue-ipc config.changed adapterId=" << request.adapterId
+              << " externalId=" << request.adapter.externalId
+              << " ip=" << m_settings.ip.toStdString()
               << " port=" << m_settings.port
               << " useTls=" << (m_settings.useTls ? "true" : "false")
               << '\n';
@@ -134,8 +282,8 @@ void HueSidecar::onBootstrap(const sdk::BootstrapRequest &request)
 
 phicore::adapter::v1::CmdResponse HueSidecar::onChannelInvoke(const sdk::ChannelInvokeRequest &request)
 {
-    if (!m_hasBootstrap)
-        return failureResponse(request.cmdId, CmdStatus::TemporarilyOffline, QStringLiteral("Adapter not bootstrapped"));
+    if (!m_runtimeConfigured)
+        return failureResponse(request.cmdId, CmdStatus::TemporarilyOffline, QStringLiteral("Adapter not configured"));
 
     const QString deviceExternalId = QString::fromStdString(request.deviceExternalId);
     const QString channelExternalId = QString::fromStdString(request.channelExternalId);
@@ -258,6 +406,99 @@ phicore::adapter::v1::CmdResponse HueSidecar::onDeviceNameUpdate(const sdk::Devi
     return successResponse(request.cmdId);
 }
 
+phicore::adapter::v1::CmdResponse HueSidecar::onDeviceEffectInvoke(const sdk::DeviceEffectInvokeRequest &request)
+{
+    if (request.deviceExternalId.empty()) {
+        return failureResponse(request.cmdId,
+                               CmdStatus::InvalidArgument,
+                               QStringLiteral("deviceExternalId missing"));
+    }
+
+    const QString deviceExternalId = QString::fromStdString(request.deviceExternalId);
+    QString lightId = m_lightResourceByDevice.value(deviceExternalId);
+    if (lightId.isEmpty()) {
+        QString refreshError;
+        pollBridge(&refreshError);
+        lightId = m_lightResourceByDevice.value(deviceExternalId);
+    }
+    if (lightId.isEmpty()) {
+        return failureResponse(request.cmdId,
+                               CmdStatus::InvalidArgument,
+                               QStringLiteral("No Hue light resource for device"));
+    }
+
+    const DeviceEntry *deviceEntry = nullptr;
+    auto deviceIt = m_devices.constFind(deviceExternalId);
+    if (deviceIt != m_devices.cend())
+        deviceEntry = &deviceIt.value();
+
+    const QString effectId = QString::fromStdString(request.effectId).trimmed();
+    const v1::DeviceEffect requestedEffect = request.effect;
+
+    const v1::DeviceEffectDescriptor *descriptor = nullptr;
+    if (deviceEntry) {
+        for (const v1::DeviceEffectDescriptor &desc : deviceEntry->device.effects) {
+            if (!effectId.isEmpty() && desc.id == effectId.toStdString()) {
+                descriptor = &desc;
+                break;
+            }
+            if (!descriptor
+                && requestedEffect != v1::DeviceEffect::None
+                && desc.effect == requestedEffect) {
+                descriptor = &desc;
+            }
+        }
+    }
+
+    QString hueEffectName = descriptor ? effectMetaValue(*descriptor, QStringLiteral("hueEffect")) : QString{};
+    if (hueEffectName.isEmpty() && !effectId.isEmpty())
+        hueEffectName = effectId;
+    if (hueEffectName.isEmpty())
+        hueEffectName = hueEffectNameForDeviceEffect(requestedEffect);
+    if (hueEffectName.isEmpty()) {
+        return failureResponse(request.cmdId,
+                               CmdStatus::InvalidArgument,
+                               QStringLiteral("Unsupported effect for this device"));
+    }
+
+    QString category = descriptor
+        ? effectMetaValue(*descriptor, QStringLiteral("hueEffectCategory"))
+        : QStringLiteral("effects");
+    if (category.isEmpty())
+        category = QStringLiteral("effects");
+
+    const QJsonObject paramsObj = parseJsonObject(request.paramsJson);
+
+    QJsonObject payload;
+    if (category == QLatin1String("timed_effects")) {
+        QJsonObject timed;
+        timed.insert(QStringLiteral("effect"), hueEffectName);
+        if (paramsObj.contains(QStringLiteral("duration")))
+            timed.insert(QStringLiteral("duration"), paramsObj.value(QStringLiteral("duration")));
+        payload.insert(QStringLiteral("timed_effects"), timed);
+    } else {
+        QJsonObject effectsObj;
+        effectsObj.insert(QStringLiteral("effect"), hueEffectName);
+        payload.insert(QStringLiteral("effects"), effectsObj);
+    }
+
+    QString asyncError;
+    if (!m_http.putJsonAsync(m_settings,
+                             QStringLiteral("/clip/v2/resource/light/%1").arg(lightId),
+                             QJsonDocument(payload).toJson(QJsonDocument::Compact),
+                             true,
+                             &asyncError)) {
+        const QString error = asyncError.isEmpty()
+            ? QStringLiteral("Hue effect request could not be sent")
+            : asyncError;
+        return failureResponse(request.cmdId, CmdStatus::TemporarilyOffline, error);
+    }
+
+    CmdResponse resp = successResponse(request.cmdId);
+    resp.finalValue = hueEffectName.toStdString();
+    return resp;
+}
+
 phicore::adapter::v1::CmdResponse HueSidecar::onSceneInvoke(const sdk::SceneInvokeRequest &request)
 {
     if (request.sceneExternalId.empty())
@@ -340,8 +581,9 @@ std::int64_t HueSidecar::nowMs()
     return QDateTime::currentMSecsSinceEpoch();
 }
 
-void HueSidecar::applyBootstrapAdapter(const v1::Adapter &adapter)
+void HueSidecar::applyRuntimeConfig(const sdk::ConfigChangedRequest &request)
 {
+    const v1::Adapter &adapter = request.adapter;
     m_adapterInfo = adapter;
 
     m_meta = QJsonObject{};
@@ -390,6 +632,495 @@ void HueSidecar::readIntervalsFromMeta()
     m_retryIntervalMs = std::clamp(readInt(m_meta, QStringLiteral("retryIntervalMs"), 10000), 1000, 600000);
 }
 
+void HueSidecar::startEventStream()
+{
+    if (!m_runtimeConfigured || m_eventStreamReply)
+        return;
+
+    const QString host = HttpClient::effectiveHost(m_settings);
+    if (host.isEmpty() || m_settings.appKey.trimmed().isEmpty()) {
+        m_nextEventStreamRetryDueMs = nowMs() + std::max(1000, m_retryIntervalMs);
+        return;
+    }
+
+    const bool useTls = m_settings.useTls;
+    const int defaultPort = useTls ? 443 : 80;
+    const int port = m_settings.port > 0 ? m_settings.port : defaultPort;
+
+    QUrl url;
+    url.setScheme(useTls ? QStringLiteral("https") : QStringLiteral("http"));
+    url.setHost(host);
+    url.setPort(port);
+    url.setPath(QStringLiteral("/eventstream/clip/v2"));
+
+    QNetworkRequest request(url);
+    request.setRawHeader("Accept", "text/event-stream");
+    request.setRawHeader("hue-application-key", m_settings.appKey.toUtf8());
+    request.setRawHeader("User-Agent", "phi-adapter-hue-ipc/1.0");
+
+#if QT_CONFIG(ssl)
+    if (useTls) {
+        QSslConfiguration ssl = QSslConfiguration::defaultConfiguration();
+        ssl.setPeerVerifyMode(QSslSocket::VerifyNone);
+        request.setSslConfiguration(ssl);
+    }
+#endif
+
+    m_eventStreamReply = m_network.get(request);
+    if (!m_eventStreamReply) {
+        m_nextEventStreamRetryDueMs = nowMs() + std::max(1000, m_retryIntervalMs);
+    }
+}
+
+void HueSidecar::stopEventStream()
+{
+    if (!m_eventStreamReply)
+        return;
+
+    m_eventStreamReply->abort();
+    m_eventStreamReply->deleteLater();
+    m_eventStreamReply = nullptr;
+    m_eventStreamLineBuffer.clear();
+    m_eventStreamDataBuffer.clear();
+    m_eventStreamActive = false;
+}
+
+void HueSidecar::pumpEventStream(std::int64_t now)
+{
+    if (!m_eventStreamReply)
+        return;
+
+    const QByteArray chunk = m_eventStreamReply->readAll();
+    if (!chunk.isEmpty()) {
+        setConnectionState(true);
+        m_eventStreamActive = true;
+        m_eventStreamRetryCount = 0;
+        m_nextEventStreamRetryDueMs = now + std::max(1000, m_retryIntervalMs);
+        m_eventStreamLineBuffer.append(chunk);
+
+        while (true) {
+            const int newline = m_eventStreamLineBuffer.indexOf('\n');
+            if (newline < 0)
+                break;
+
+            QByteArray line = m_eventStreamLineBuffer.left(newline);
+            m_eventStreamLineBuffer.remove(0, newline + 1);
+            if (!line.isEmpty() && line.endsWith('\r'))
+                line.chop(1);
+
+            if (line.isEmpty()) {
+                if (!m_eventStreamDataBuffer.isEmpty()) {
+                    processEventStreamPayload(m_eventStreamDataBuffer, now);
+                    m_eventStreamDataBuffer.clear();
+                }
+                continue;
+            }
+
+            if (line.startsWith("data:")) {
+                QByteArray payload = line.mid(5);
+                if (!payload.isEmpty() && payload.at(0) == ' ')
+                    payload.remove(0, 1);
+                if (!m_eventStreamDataBuffer.isEmpty())
+                    m_eventStreamDataBuffer.append('\n');
+                m_eventStreamDataBuffer.append(payload);
+            }
+        }
+    }
+
+    if (!m_eventStreamReply->isFinished())
+        return;
+
+    const bool hasError = m_eventStreamReply->error() != QNetworkReply::NoError;
+    if (hasError) {
+        std::cerr << "hue-ipc eventstream error: "
+                  << m_eventStreamReply->errorString().toStdString()
+                  << '\n';
+    } else {
+        std::cerr << "hue-ipc eventstream finished" << '\n';
+    }
+
+    m_eventStreamReply->deleteLater();
+    m_eventStreamReply = nullptr;
+    m_eventStreamLineBuffer.clear();
+    m_eventStreamDataBuffer.clear();
+    m_eventStreamActive = false;
+
+    if (hasError)
+        setConnectionState(false);
+
+    int retryDelayMs = m_retryIntervalMs;
+    if (m_eventStreamRetryCount < kEventStreamFastRetryAttempts) {
+        ++m_eventStreamRetryCount;
+        retryDelayMs = kEventStreamFastRetryMs;
+    }
+    m_nextEventStreamRetryDueMs = now + std::max(1000, retryDelayMs);
+}
+
+void HueSidecar::processEventStreamPayload(const QByteArray &jsonData, std::int64_t nowMs)
+{
+    QJsonParseError parseError{};
+    const QJsonDocument doc = QJsonDocument::fromJson(jsonData, &parseError);
+    if (parseError.error != QJsonParseError::NoError)
+        return;
+
+    if (doc.isArray()) {
+        for (const QJsonValue &entry : doc.array()) {
+            if (!entry.isObject())
+                continue;
+            processEventStreamEventObject(entry.toObject(), nowMs);
+        }
+        return;
+    }
+
+    if (doc.isObject())
+        processEventStreamEventObject(doc.object(), nowMs);
+}
+
+void HueSidecar::processEventStreamEventObject(const QJsonObject &eventObj, std::int64_t nowMs)
+{
+    const QString eventType = eventObj.value(QStringLiteral("type")).toString();
+    if (eventType == QLatin1String("delete")) {
+        m_nextPollDueMs = 0;
+        return;
+    }
+
+    const QJsonArray dataArray = eventObj.value(QStringLiteral("data")).toArray();
+    for (const QJsonValue &entry : dataArray) {
+        if (!entry.isObject())
+            continue;
+        const QJsonObject resourceObj = entry.toObject();
+        const QString resourceType = resourceObj.value(QStringLiteral("type")).toString();
+
+        if (resourceType == QLatin1String("relative_rotary")) {
+            handleRelativeRotaryEvent(resourceObj, nowMs);
+            continue;
+        }
+        if (resourceType == QLatin1String("button")) {
+            handleButtonEvent(resourceObj, nowMs);
+            continue;
+        }
+        if (resourceType == QLatin1String("zigbee_connectivity")) {
+            const QString deviceExternalId = deviceExternalIdFromResource(resourceObj);
+            if (deviceExternalId.isEmpty())
+                continue;
+            const std::optional<std::int64_t> status = parseConnectivityStatus(resourceObj);
+            if (!status.has_value())
+                continue;
+            v1::Utf8String sendError;
+            sendChannelStateUpdated(deviceExternalId.toStdString(),
+                                    "zigbee_status",
+                                    *status,
+                                    nowMs,
+                                    &sendError);
+            continue;
+        }
+
+        if (resourceType == QLatin1String("light")
+            || resourceType == QLatin1String("motion")
+            || resourceType == QLatin1String("tamper")
+            || resourceType == QLatin1String("temperature")
+            || resourceType == QLatin1String("light_level")
+            || resourceType == QLatin1String("device_power")
+            || resourceType == QLatin1String("scene")
+            || resourceType == QLatin1String("room")
+            || resourceType == QLatin1String("zone")
+            || resourceType == QLatin1String("device")) {
+            m_nextPollDueMs = 0;
+        }
+    }
+}
+
+QString HueSidecar::deviceExternalIdFromResource(const QJsonObject &resourceObj) const
+{
+    const QJsonObject ownerObj = resourceObj.value(QStringLiteral("owner")).toObject();
+    if (ownerObj.value(QStringLiteral("rtype")).toString() != QLatin1String("device"))
+        return {};
+    return ownerObj.value(QStringLiteral("rid")).toString().trimmed();
+}
+
+QString HueSidecar::resolveButtonChannel(const QString &deviceExternalId,
+                                         const QString &buttonResourceId,
+                                         const QJsonObject &resourceObj) const
+{
+    QString channelExternalId = m_buttonResourceToChannel.value(buttonResourceId);
+    const auto deviceIt = m_devices.constFind(deviceExternalId);
+    const v1::ChannelList *channels = (deviceIt != m_devices.cend()) ? &deviceIt->channels : nullptr;
+
+    const QJsonObject metadataObj = resourceObj.value(QStringLiteral("metadata")).toObject();
+    const int controlId = metadataObj.value(QStringLiteral("control_id")).toInt(0);
+
+    if (channelExternalId.isEmpty() && controlId > 0 && channels) {
+        const QString candidate = QStringLiteral("button%1").arg(controlId);
+        for (const v1::Channel &channel : *channels) {
+            if (QString::fromStdString(channel.externalId) == candidate) {
+                channelExternalId = candidate;
+                break;
+            }
+        }
+    }
+
+    if (channelExternalId.isEmpty() && channels) {
+        QString firstButtonN;
+        for (const v1::Channel &channel : *channels) {
+            const QString id = QString::fromStdString(channel.externalId);
+            if (id == QLatin1String("button")) {
+                channelExternalId = id;
+                break;
+            }
+            if (firstButtonN.isEmpty() && id.startsWith(QStringLiteral("button")))
+                firstButtonN = id;
+        }
+        if (channelExternalId.isEmpty() && !firstButtonN.isEmpty())
+            channelExternalId = firstButtonN;
+    }
+
+    if (channelExternalId.isEmpty())
+        channelExternalId = QStringLiteral("button");
+    return channelExternalId;
+}
+
+void HueSidecar::handleRelativeRotaryEvent(const QJsonObject &resourceObj, std::int64_t nowMs)
+{
+    const QString deviceExternalId = deviceExternalIdFromResource(resourceObj);
+    if (deviceExternalId.isEmpty())
+        return;
+
+    const QJsonObject rrObj = resourceObj.value(QStringLiteral("relative_rotary")).toObject();
+    const QJsonObject lastEventObj = rrObj.value(QStringLiteral("last_event")).toObject();
+    const QJsonObject reportObj = rrObj.value(QStringLiteral("rotary_report")).toObject();
+
+    QJsonObject rotationObj = lastEventObj.value(QStringLiteral("rotation")).toObject();
+    if (!rotationObj.contains(QStringLiteral("steps")))
+        rotationObj = reportObj.value(QStringLiteral("rotation")).toObject();
+    if (!rotationObj.contains(QStringLiteral("steps")))
+        return;
+
+    int steps = rotationObj.value(QStringLiteral("steps")).toInt(0);
+    if (steps == 0)
+        return;
+
+    const QString direction = rotationObj.value(QStringLiteral("direction")).toString().trimmed().toLower();
+    if (direction == QLatin1String("counter_clock_wise")
+        || direction == QLatin1String("counter_clockwise")
+        || direction == QLatin1String("ccw")) {
+        steps = -std::abs(steps);
+    } else if (direction == QLatin1String("clock_wise")
+               || direction == QLatin1String("clockwise")
+               || direction == QLatin1String("cw")) {
+        steps = std::abs(steps);
+    } else {
+        return;
+    }
+
+    std::int64_t eventTs = nowMs;
+    const std::int64_t reportTs = parseHueTimestampMs(reportObj.value(QStringLiteral("updated")).toString());
+    if (reportTs > 0)
+        eventTs = reportTs;
+
+    v1::Utf8String sendError;
+    sendChannelStateUpdated(deviceExternalId.toStdString(),
+                            "dial",
+                            static_cast<std::int64_t>(steps),
+                            eventTs,
+                            &sendError);
+    m_lastDialValueByDevice.insert(deviceExternalId, steps);
+    m_dialResetDueMs.insert(deviceExternalId, nowMs + kDialResetDelayMs);
+}
+
+void HueSidecar::handleButtonEvent(const QJsonObject &resourceObj, std::int64_t nowMs)
+{
+    const QString deviceExternalId = deviceExternalIdFromResource(resourceObj);
+    if (deviceExternalId.isEmpty())
+        return;
+
+    const QString buttonResourceId = resourceObj.value(QStringLiteral("id")).toString();
+    const QJsonObject buttonObj = resourceObj.value(QStringLiteral("button")).toObject();
+    QString eventName = buttonObj.value(QStringLiteral("last_event")).toString();
+    if (eventName.isEmpty()) {
+        const QJsonObject reportObj = buttonObj.value(QStringLiteral("button_report")).toObject();
+        eventName = reportObj.value(QStringLiteral("event")).toString();
+    }
+    if (eventName.isEmpty())
+        return;
+
+    std::int64_t eventTs = nowMs;
+    const QJsonObject reportObj = buttonObj.value(QStringLiteral("button_report")).toObject();
+    const std::int64_t reportTs = parseHueTimestampMs(reportObj.value(QStringLiteral("updated")).toString());
+    if (reportTs > 0)
+        eventTs = reportTs;
+
+    const v1::ButtonEventCode code = mapHueButtonEvent(eventName);
+    if (code == v1::ButtonEventCode::None)
+        return;
+
+    const QString channelExternalId = resolveButtonChannel(deviceExternalId, buttonResourceId, resourceObj);
+    if (!buttonResourceId.isEmpty())
+        m_buttonResourceToChannel.insert(buttonResourceId, channelExternalId);
+
+    const QString bindingKey = channelBindingKey(deviceExternalId, channelExternalId);
+
+    if (code == v1::ButtonEventCode::ShortPressRelease) {
+        ButtonMultiPressTracker &tracker = m_buttonMultiPress[bindingKey];
+        tracker.deviceExternalId = deviceExternalId;
+        tracker.channelExternalId = channelExternalId;
+        tracker.lastEventTs = eventTs;
+        tracker.lastSeenMs = nowMs;
+        tracker.count += 1;
+        tracker.dueMs = nowMs + kButtonMultiPressWindowMs;
+        m_buttonLastEventCode.remove(bindingKey);
+        m_buttonLastEventTs.remove(bindingKey);
+        return;
+    }
+
+    v1::Utf8String sendError;
+    if (code == v1::ButtonEventCode::Repeat) {
+        const int prevCode = m_buttonLastEventCode.value(bindingKey, 0);
+        const std::int64_t prevTs = m_buttonLastEventTs.value(bindingKey, 0);
+        const bool hasRecentLongState =
+            (prevCode == static_cast<int>(v1::ButtonEventCode::LongPress)
+             || prevCode == static_cast<int>(v1::ButtonEventCode::Repeat))
+            && prevTs > 0
+            && (eventTs - prevTs) <= kButtonLongPressRepeatWindowMs;
+        if (!hasRecentLongState) {
+            sendChannelStateUpdated(deviceExternalId.toStdString(),
+                                    channelExternalId.toStdString(),
+                                    static_cast<std::int64_t>(v1::ButtonEventCode::LongPress),
+                                    eventTs,
+                                    &sendError);
+            m_buttonLastEventCode.insert(bindingKey, static_cast<int>(v1::ButtonEventCode::LongPress));
+            m_buttonLastEventTs.insert(bindingKey, eventTs);
+        }
+    }
+
+    sendChannelStateUpdated(deviceExternalId.toStdString(),
+                            channelExternalId.toStdString(),
+                            static_cast<std::int64_t>(code),
+                            eventTs,
+                            &sendError);
+
+    if (code == v1::ButtonEventCode::LongPressRelease) {
+        m_buttonLastEventCode.remove(bindingKey);
+        m_buttonLastEventTs.remove(bindingKey);
+    } else {
+        m_buttonLastEventCode.insert(bindingKey, static_cast<int>(code));
+        m_buttonLastEventTs.insert(bindingKey, eventTs);
+    }
+}
+
+void HueSidecar::processPendingButtonAggregates(std::int64_t nowMs)
+{
+    QStringList dueKeys;
+    for (auto it = m_buttonMultiPress.cbegin(); it != m_buttonMultiPress.cend(); ++it) {
+        if (it->count > 0 && it->dueMs > 0 && nowMs >= it->dueMs)
+            dueKeys.push_back(it.key());
+    }
+    for (const QString &bindingKey : dueKeys)
+        finalizePendingShortPress(bindingKey);
+}
+
+void HueSidecar::finalizePendingShortPress(const QString &bindingKey)
+{
+    auto it = m_buttonMultiPress.find(bindingKey);
+    if (it == m_buttonMultiPress.end())
+        return;
+
+    ButtonMultiPressTracker &tracker = it.value();
+    if (tracker.count <= 0) {
+        tracker.lastEventTs = 0;
+        tracker.lastSeenMs = 0;
+        tracker.dueMs = 0;
+        return;
+    }
+
+    const int count = tracker.count;
+    tracker.count = 0;
+    const std::int64_t ts = tracker.lastEventTs > 0 ? tracker.lastEventTs : nowMs();
+    tracker.lastEventTs = 0;
+    tracker.lastSeenMs = 0;
+    tracker.dueMs = 0;
+
+    if (tracker.deviceExternalId.isEmpty() || tracker.channelExternalId.isEmpty())
+        return;
+
+    v1::ButtonEventCode code = v1::ButtonEventCode::None;
+    if (count == 1) {
+        code = v1::ButtonEventCode::ShortPressRelease;
+    } else if (count == 2) {
+        code = v1::ButtonEventCode::DoublePress;
+    } else if (count == 3) {
+        code = v1::ButtonEventCode::TriplePress;
+    } else if (count == 4) {
+        code = v1::ButtonEventCode::QuadruplePress;
+    } else {
+        code = v1::ButtonEventCode::QuintuplePress;
+    }
+
+    v1::Utf8String sendError;
+    sendChannelStateUpdated(tracker.deviceExternalId.toStdString(),
+                            tracker.channelExternalId.toStdString(),
+                            static_cast<std::int64_t>(code),
+                            ts,
+                            &sendError);
+}
+
+void HueSidecar::processPendingDialResets(std::int64_t nowMs)
+{
+    QStringList dueDevices;
+    for (auto it = m_dialResetDueMs.cbegin(); it != m_dialResetDueMs.cend(); ++it) {
+        if (nowMs >= it.value())
+            dueDevices.push_back(it.key());
+    }
+
+    for (const QString &deviceExternalId : dueDevices) {
+        if (m_lastDialValueByDevice.value(deviceExternalId, 0) == 0) {
+            m_dialResetDueMs.remove(deviceExternalId);
+            continue;
+        }
+        v1::Utf8String sendError;
+        sendChannelStateUpdated(deviceExternalId.toStdString(), "dial", static_cast<std::int64_t>(0), nowMs, &sendError);
+        m_lastDialValueByDevice.insert(deviceExternalId, 0);
+        m_dialResetDueMs.remove(deviceExternalId);
+    }
+}
+
+void HueSidecar::rebuildButtonResourceMap(const QJsonArray &buttonData)
+{
+    struct ButtonResource {
+        QString resourceId;
+        int controlId = 1;
+    };
+
+    QHash<QString, std::vector<ButtonResource>> byDevice;
+    for (const QJsonValue &entry : buttonData) {
+        if (!entry.isObject())
+            continue;
+        const QJsonObject obj = entry.toObject();
+        const QString deviceExternalId = deviceExternalIdFromResource(obj);
+        if (deviceExternalId.isEmpty())
+            continue;
+
+        ButtonResource resource;
+        resource.resourceId = obj.value(QStringLiteral("id")).toString().trimmed();
+        const QJsonObject metadataObj = obj.value(QStringLiteral("metadata")).toObject();
+        const int controlId = metadataObj.value(QStringLiteral("control_id")).toInt(0);
+        resource.controlId = controlId > 0 ? controlId : 1;
+        byDevice[deviceExternalId].push_back(resource);
+    }
+
+    m_buttonResourceToChannel.clear();
+    for (auto it = byDevice.cbegin(); it != byDevice.cend(); ++it) {
+        const bool singleButton = it->size() <= 1;
+        for (const ButtonResource &resource : it.value()) {
+            if (resource.resourceId.isEmpty())
+                continue;
+            const QString channelId = singleButton
+                ? QStringLiteral("button")
+                : QStringLiteral("button%1").arg(resource.controlId);
+            m_buttonResourceToChannel.insert(resource.resourceId, channelId);
+        }
+    }
+}
+
 bool HueSidecar::pollBridge(QString *error)
 {
     if (HttpClient::effectiveHost(m_settings).isEmpty()) {
@@ -411,6 +1142,7 @@ bool HueSidecar::pollBridge(QString *error)
     QJsonArray lightLevelData;
     QJsonArray devicePowerData;
     QJsonArray buttonData;
+    QJsonArray relativeRotaryData;
     QJsonArray zigbeeConnectivityData;
     QJsonArray roomData;
     QJsonArray zoneData;
@@ -432,6 +1164,9 @@ bool HueSidecar::pollBridge(QString *error)
         devicePowerData = QJsonArray{};
     if (!fetchResourceArray(QStringLiteral("button"), &buttonData, nullptr))
         buttonData = QJsonArray{};
+    rebuildButtonResourceMap(buttonData);
+    if (!fetchResourceArray(QStringLiteral("relative_rotary"), &relativeRotaryData, nullptr))
+        relativeRotaryData = QJsonArray{};
     if (!fetchResourceArray(QStringLiteral("zigbee_connectivity"), &zigbeeConnectivityData, nullptr))
         zigbeeConnectivityData = QJsonArray{};
     if (!fetchResourceArray(QStringLiteral("room"), &roomData, error))
@@ -464,6 +1199,7 @@ bool HueSidecar::pollBridge(QString *error)
                                             lightLevelData,
                                             devicePowerData,
                                             buttonData,
+                                            relativeRotaryData,
                                             zigbeeConnectivityData,
                                             roomData,
                                             zoneData,

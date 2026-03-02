@@ -14,6 +14,10 @@
 
 namespace phicore::hue::ipc {
 
+namespace {
+constexpr int kDefaultRequestTimeoutMs = 10000;
+}
+
 HttpClient::HttpClient(QNetworkAccessManager *manager)
     : m_manager(manager)
 {
@@ -21,10 +25,10 @@ HttpClient::HttpClient(QNetworkAccessManager *manager)
 
 QString HttpClient::effectiveHost(const ConnectionSettings &settings)
 {
-    const QString host = settings.host.trimmed();
-    if (!host.isEmpty())
-        return host;
-    return settings.ip.trimmed();
+    const QString ip = settings.ip.trimmed();
+    if (!ip.isEmpty())
+        return ip;
+    return {};
 }
 
 HttpResult HttpClient::get(const ConnectionSettings &settings,
@@ -95,6 +99,16 @@ bool HttpClient::putJsonAsync(const ConnectionSettings &settings,
             *error = QStringLiteral("Failed to create network request");
         return false;
     }
+
+    auto *timeout = new QTimer(reply);
+    timeout->setSingleShot(true);
+    timeout->setInterval(kDefaultRequestTimeoutMs);
+    QObject::connect(timeout, &QTimer::timeout, reply, [reply]() {
+        if (!reply->isFinished())
+            reply->abort();
+    });
+    QObject::connect(reply, &QNetworkReply::finished, timeout, &QTimer::stop);
+    timeout->start();
 
     QObject::connect(reply, &QNetworkReply::finished, reply, &QNetworkReply::deleteLater);
     if (error)
@@ -209,7 +223,7 @@ HttpResult HttpClient::request(const ConnectionSettings &settings,
         loop.quit();
     });
 
-    timer.start(timeoutMs > 0 ? timeoutMs : 10000);
+    timer.start(timeoutMs > 0 ? timeoutMs : kDefaultRequestTimeoutMs);
     loop.exec();
 
     if (timedOut) {
