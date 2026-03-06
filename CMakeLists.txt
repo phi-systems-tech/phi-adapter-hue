@@ -64,6 +64,7 @@ if(PHI_ADAPTER_HUE_BUILD_IPC)
             Qt6::Core
             Qt6::Network
             phi::adapter-sdk
+            phi::adapter-sdk-qt
     )
 
     set_target_properties(phi_adapter_hue_ipc PROPERTIES
@@ -72,5 +73,10 @@ if(PHI_ADAPTER_HUE_BUILD_IPC)
 
     install(TARGETS phi_adapter_hue_ipc
         RUNTIME DESTINATION lib/phi/plugins/adapters
+    )
+
+    install(FILES
+        ${CMAKE_CURRENT_SOURCE_DIR}/hue-config.json
+        DESTINATION lib/phi/plugins/adapters
     )
 endif()

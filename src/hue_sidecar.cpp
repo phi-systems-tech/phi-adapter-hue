@@ -17,7 +17,6 @@
 #include <QSslSocket>
 #endif
 
-#include "hue_probe.h"
 #include "hue_schema.h"
 
 namespace phicore::hue::ipc {
@@ -183,12 +182,74 @@ QString effectMetaValue(const v1::DeviceEffectDescriptor &descriptor, const QStr
 
 } // namespace
 
-HueSidecar::HueSidecar()
-    : m_http(&m_requestNetwork)
+HueAdapterInstance::HueAdapterInstance() = default;
+
+bool HueAdapterInstance::start()
 {
+    if (!m_requestNetwork)
+        m_requestNetwork = std::make_unique<QNetworkAccessManager>();
+    if (!m_eventStreamNetwork)
+        m_eventStreamNetwork = std::make_unique<QNetworkAccessManager>();
+    if (!m_http)
+        m_http = std::make_unique<HttpClient>(m_requestNetwork.get());
+
+    m_runtimeConfigured = false;
+    m_nextPollDueMs = 0;
+    m_nextEventStreamRetryDueMs = 0;
+    m_eventStreamRetryCount = 0;
+    m_buttonMultiPress.clear();
+    m_buttonLastEventCode.clear();
+    m_buttonLastEventTs.clear();
+    m_lastDialValueByDevice.clear();
+    m_dialResetDueMs.clear();
+    m_devices.clear();
+    m_lightResourceByDevice.clear();
+    m_knownRooms.clear();
+    m_knownGroups.clear();
+    m_knownScenes.clear();
+    stopEventStream();
+    setConnectionState(false);
+
+    if (!m_tickTimer) {
+        m_tickTimer = std::make_unique<QTimer>();
+        m_tickTimer->setInterval(250);
+        m_tickTimer->setSingleShot(false);
+        QObject::connect(m_tickTimer.get(), &QTimer::timeout, [this]() {
+            tick();
+        });
+    }
+    if (!m_tickTimer->isActive())
+        m_tickTimer->start();
+
+    if (hasConfig()) {
+        applyRuntimeConfig(config());
+        m_runtimeConfigured = true;
+        startEventStream();
+    }
+
+    return true;
 }
 
-void HueSidecar::tick()
+void HueAdapterInstance::stop()
+{
+    m_runtimeConfigured = false;
+    if (m_tickTimer && m_tickTimer->isActive())
+        m_tickTimer->stop();
+    stopEventStream();
+    m_buttonMultiPress.clear();
+    m_buttonLastEventCode.clear();
+    m_buttonLastEventTs.clear();
+    m_lastDialValueByDevice.clear();
+    m_dialResetDueMs.clear();
+    m_devices.clear();
+    m_lightResourceByDevice.clear();
+    m_knownRooms.clear();
+    m_knownGroups.clear();
+    m_knownScenes.clear();
+    setConnectionState(false);
+}
+
+void HueAdapterInstance::tick()
 {
     if (!m_runtimeConfigured)
         return;
@@ -223,47 +284,35 @@ void HueSidecar::tick()
     m_nextPollDueMs = now + std::max(1000, pollInterval);
 }
 
-void HueSidecar::onConnected()
+void HueAdapterInstance::onConnected()
 {
     std::cerr << "hue-ipc connected" << '\n';
     if (m_runtimeConfigured)
         startEventStream();
 }
 
-void HueSidecar::onDisconnected()
+void HueAdapterInstance::onDisconnected()
 {
     m_runtimeConfigured = false;
+    if (m_tickTimer && m_tickTimer->isActive())
+        m_tickTimer->stop();
     stopEventStream();
-    m_buttonMultiPress.clear();
-    m_buttonLastEventCode.clear();
-    m_buttonLastEventTs.clear();
-    m_dialResetDueMs.clear();
-    setConnectionState(false);
-    std::cerr << "hue-ipc disconnected" << '\n';
-}
-
-void HueSidecar::onBootstrap(const sdk::BootstrapRequest &request)
-{
-    AdapterSidecar::onBootstrap(request);
-    m_runtimeConfigured = false;
-    m_nextPollDueMs = 0;
-    m_nextEventStreamRetryDueMs = 0;
-    m_eventStreamRetryCount = 0;
     m_buttonMultiPress.clear();
     m_buttonLastEventCode.clear();
     m_buttonLastEventTs.clear();
     m_lastDialValueByDevice.clear();
     m_dialResetDueMs.clear();
-    stopEventStream();
-
-    std::cerr << "hue-ipc bootstrap adapterId=" << request.adapterId
-              << " externalId=" << request.adapter.externalId
-              << '\n';
+    m_devices.clear();
+    m_lightResourceByDevice.clear();
+    m_knownRooms.clear();
+    m_knownGroups.clear();
+    m_knownScenes.clear();
+    setConnectionState(false);
+    std::cerr << "hue-ipc disconnected" << '\n';
 }
 
-void HueSidecar::onConfigChanged(const sdk::ConfigChangedRequest &request)
+void HueAdapterInstance::onConfigChanged(const sdk::ConfigChangedRequest &request)
 {
-    AdapterSidecar::onConfigChanged(request);
     applyRuntimeConfig(request);
     m_runtimeConfigured = true;
     m_nextPollDueMs = 0;
@@ -280,7 +329,12 @@ void HueSidecar::onConfigChanged(const sdk::ConfigChangedRequest &request)
               << '\n';
 }
 
-phicore::adapter::v1::CmdResponse HueSidecar::onChannelInvoke(const sdk::ChannelInvokeRequest &request)
+void HueAdapterInstance::onChannelInvoke(const sdk::ChannelInvokeRequest &request)
+{
+    submitCmdResult(handleChannelInvoke(request), "channel.invoke");
+}
+
+phicore::adapter::v1::CmdResponse HueAdapterInstance::handleChannelInvoke(const sdk::ChannelInvokeRequest &request)
 {
     if (!m_runtimeConfigured)
         return failureResponse(request.cmdId, CmdStatus::TemporarilyOffline, QStringLiteral("Adapter not configured"));
@@ -307,7 +361,7 @@ phicore::adapter::v1::CmdResponse HueSidecar::onChannelInvoke(const sdk::Channel
         return failureResponse(request.cmdId, CmdStatus::InvalidArgument, payloadError);
 
     QString asyncError;
-    if (!m_http.putJsonAsync(m_settings,
+    if (!m_http->putJsonAsync(m_settings,
                              QStringLiteral("/clip/v2/resource/light/%1").arg(lightId),
                              payload,
                              true,
@@ -354,11 +408,15 @@ phicore::adapter::v1::CmdResponse HueSidecar::onChannelInvoke(const sdk::Channel
     return resp;
 }
 
-phicore::adapter::v1::ActionResponse HueSidecar::onAdapterActionInvoke(const sdk::AdapterActionInvokeRequest &request)
+void HueAdapterInstance::onAdapterActionInvoke(const sdk::AdapterActionInvokeRequest &request)
+{
+    submitActionResult(handleAdapterActionInvoke(request), "adapter.action.invoke");
+}
+
+phicore::adapter::v1::ActionResponse HueAdapterInstance::handleAdapterActionInvoke(
+    const sdk::AdapterActionInvokeRequest &request)
 {
     const QString actionId = QString::fromStdString(request.actionId);
-    if (actionId == QLatin1String("probe"))
-        return invokeProbe(request);
     if (actionId == QLatin1String("startDeviceDiscovery"))
         return invokeStartDeviceDiscovery(request);
 
@@ -370,7 +428,13 @@ phicore::adapter::v1::ActionResponse HueSidecar::onAdapterActionInvoke(const sdk
     return resp;
 }
 
-phicore::adapter::v1::CmdResponse HueSidecar::onDeviceNameUpdate(const sdk::DeviceNameUpdateRequest &request)
+void HueAdapterInstance::onDeviceNameUpdate(const sdk::DeviceNameUpdateRequest &request)
+{
+    submitCmdResult(handleDeviceNameUpdate(request), "device.name.update");
+}
+
+phicore::adapter::v1::CmdResponse HueAdapterInstance::handleDeviceNameUpdate(
+    const sdk::DeviceNameUpdateRequest &request)
 {
     if (request.deviceExternalId.empty())
         return failureResponse(request.cmdId, CmdStatus::InvalidArgument, QStringLiteral("deviceExternalId missing"));
@@ -384,7 +448,7 @@ phicore::adapter::v1::CmdResponse HueSidecar::onDeviceNameUpdate(const sdk::Devi
     QJsonObject payload;
     payload.insert(QStringLiteral("metadata"), metadata);
 
-    const HttpResult result = m_http.putJson(m_settings,
+    const HttpResult result = m_http->putJson(m_settings,
                                              QStringLiteral("/clip/v2/resource/device/%1").arg(deviceExternalId),
                                              QJsonDocument(payload).toJson(QJsonDocument::Compact),
                                              true,
@@ -406,7 +470,13 @@ phicore::adapter::v1::CmdResponse HueSidecar::onDeviceNameUpdate(const sdk::Devi
     return successResponse(request.cmdId);
 }
 
-phicore::adapter::v1::CmdResponse HueSidecar::onDeviceEffectInvoke(const sdk::DeviceEffectInvokeRequest &request)
+void HueAdapterInstance::onDeviceEffectInvoke(const sdk::DeviceEffectInvokeRequest &request)
+{
+    submitCmdResult(handleDeviceEffectInvoke(request), "device.effect.invoke");
+}
+
+phicore::adapter::v1::CmdResponse HueAdapterInstance::handleDeviceEffectInvoke(
+    const sdk::DeviceEffectInvokeRequest &request)
 {
     if (request.deviceExternalId.empty()) {
         return failureResponse(request.cmdId,
@@ -483,7 +553,7 @@ phicore::adapter::v1::CmdResponse HueSidecar::onDeviceEffectInvoke(const sdk::De
     }
 
     QString asyncError;
-    if (!m_http.putJsonAsync(m_settings,
+    if (!m_http->putJsonAsync(m_settings,
                              QStringLiteral("/clip/v2/resource/light/%1").arg(lightId),
                              QJsonDocument(payload).toJson(QJsonDocument::Compact),
                              true,
@@ -499,7 +569,12 @@ phicore::adapter::v1::CmdResponse HueSidecar::onDeviceEffectInvoke(const sdk::De
     return resp;
 }
 
-phicore::adapter::v1::CmdResponse HueSidecar::onSceneInvoke(const sdk::SceneInvokeRequest &request)
+void HueAdapterInstance::onSceneInvoke(const sdk::SceneInvokeRequest &request)
+{
+    submitCmdResult(handleSceneInvoke(request), "scene.invoke");
+}
+
+phicore::adapter::v1::CmdResponse HueAdapterInstance::handleSceneInvoke(const sdk::SceneInvokeRequest &request)
 {
     if (request.sceneExternalId.empty())
         return failureResponse(request.cmdId, CmdStatus::InvalidArgument, QStringLiteral("sceneExternalId missing"));
@@ -526,7 +601,7 @@ phicore::adapter::v1::CmdResponse HueSidecar::onSceneInvoke(const sdk::SceneInvo
     payload.insert(QStringLiteral("recall"), recall);
 
     const QString sceneExternalId = QString::fromStdString(request.sceneExternalId);
-    const HttpResult result = m_http.putJson(m_settings,
+    const HttpResult result = m_http->putJson(m_settings,
                                              QStringLiteral("/clip/v2/resource/scene/%1").arg(sceneExternalId),
                                              QJsonDocument(payload).toJson(QJsonDocument::Compact),
                                              true,
@@ -541,47 +616,12 @@ phicore::adapter::v1::CmdResponse HueSidecar::onSceneInvoke(const sdk::SceneInvo
     return successResponse(request.cmdId);
 }
 
-phicore::adapter::v1::Utf8String HueSidecar::displayName() const
-{
-    return phicore::hue::ipc::displayName();
-}
-
-phicore::adapter::v1::Utf8String HueSidecar::description() const
-{
-    return phicore::hue::ipc::description();
-}
-
-phicore::adapter::v1::Utf8String HueSidecar::iconSvg() const
-{
-    return phicore::hue::ipc::iconSvg();
-}
-
-phicore::adapter::v1::Utf8String HueSidecar::apiVersion() const
-{
-    return "1.0.0";
-}
-
-int HueSidecar::timeoutMs() const
-{
-    return 10000;
-}
-
-phicore::adapter::v1::AdapterCapabilities HueSidecar::capabilities() const
-{
-    return phicore::hue::ipc::capabilities();
-}
-
-phicore::adapter::v1::JsonText HueSidecar::configSchemaJson() const
-{
-    return phicore::hue::ipc::configSchemaJson();
-}
-
-std::int64_t HueSidecar::nowMs()
+std::int64_t HueAdapterInstance::nowMs()
 {
     return QDateTime::currentMSecsSinceEpoch();
 }
 
-void HueSidecar::applyRuntimeConfig(const sdk::ConfigChangedRequest &request)
+void HueAdapterInstance::applyRuntimeConfig(const sdk::ConfigChangedRequest &request)
 {
     const v1::Adapter &adapter = request.adapter;
     m_adapterInfo = adapter;
@@ -626,13 +666,13 @@ void HueSidecar::applyRuntimeConfig(const sdk::ConfigChangedRequest &request)
     readIntervalsFromMeta();
 }
 
-void HueSidecar::readIntervalsFromMeta()
+void HueAdapterInstance::readIntervalsFromMeta()
 {
     m_pollIntervalMs = std::clamp(readInt(m_meta, QStringLiteral("pollIntervalMs"), 5000), 1000, 600000);
     m_retryIntervalMs = std::clamp(readInt(m_meta, QStringLiteral("retryIntervalMs"), 10000), 1000, 600000);
 }
 
-void HueSidecar::startEventStream()
+void HueAdapterInstance::startEventStream()
 {
     if (!m_runtimeConfigured || m_eventStreamReply)
         return;
@@ -666,13 +706,13 @@ void HueSidecar::startEventStream()
     }
 #endif
 
-    m_eventStreamReply = m_eventStreamNetwork.get(request);
+    m_eventStreamReply = m_eventStreamNetwork->get(request);
     if (!m_eventStreamReply) {
         m_nextEventStreamRetryDueMs = nowMs() + std::max(1000, m_retryIntervalMs);
     }
 }
 
-void HueSidecar::stopEventStream()
+void HueAdapterInstance::stopEventStream()
 {
     if (!m_eventStreamReply)
         return;
@@ -685,7 +725,7 @@ void HueSidecar::stopEventStream()
     m_eventStreamActive = false;
 }
 
-void HueSidecar::pumpEventStream(std::int64_t now)
+void HueAdapterInstance::pumpEventStream(std::int64_t now)
 {
     if (!m_eventStreamReply)
         return;
@@ -756,7 +796,7 @@ void HueSidecar::pumpEventStream(std::int64_t now)
     m_nextEventStreamRetryDueMs = now + std::max(1000, retryDelayMs);
 }
 
-void HueSidecar::processEventStreamPayload(const QByteArray &jsonData, std::int64_t nowMs)
+void HueAdapterInstance::processEventStreamPayload(const QByteArray &jsonData, std::int64_t nowMs)
 {
     QJsonParseError parseError{};
     const QJsonDocument doc = QJsonDocument::fromJson(jsonData, &parseError);
@@ -776,7 +816,7 @@ void HueSidecar::processEventStreamPayload(const QByteArray &jsonData, std::int6
         processEventStreamEventObject(doc.object(), nowMs);
 }
 
-void HueSidecar::processEventStreamEventObject(const QJsonObject &eventObj, std::int64_t nowMs)
+void HueAdapterInstance::processEventStreamEventObject(const QJsonObject &eventObj, std::int64_t nowMs)
 {
     const QString eventType = eventObj.value(QStringLiteral("type")).toString();
     if (eventType == QLatin1String("delete")) {
@@ -830,7 +870,7 @@ void HueSidecar::processEventStreamEventObject(const QJsonObject &eventObj, std:
     }
 }
 
-QString HueSidecar::deviceExternalIdFromResource(const QJsonObject &resourceObj) const
+QString HueAdapterInstance::deviceExternalIdFromResource(const QJsonObject &resourceObj) const
 {
     const QJsonObject ownerObj = resourceObj.value(QStringLiteral("owner")).toObject();
     if (ownerObj.value(QStringLiteral("rtype")).toString() != QLatin1String("device"))
@@ -838,7 +878,7 @@ QString HueSidecar::deviceExternalIdFromResource(const QJsonObject &resourceObj)
     return ownerObj.value(QStringLiteral("rid")).toString().trimmed();
 }
 
-QString HueSidecar::resolveButtonChannel(const QString &deviceExternalId,
+QString HueAdapterInstance::resolveButtonChannel(const QString &deviceExternalId,
                                          const QString &buttonResourceId,
                                          const QJsonObject &resourceObj) const
 {
@@ -879,7 +919,7 @@ QString HueSidecar::resolveButtonChannel(const QString &deviceExternalId,
     return channelExternalId;
 }
 
-void HueSidecar::handleRelativeRotaryEvent(const QJsonObject &resourceObj, std::int64_t nowMs)
+void HueAdapterInstance::handleRelativeRotaryEvent(const QJsonObject &resourceObj, std::int64_t nowMs)
 {
     const QString deviceExternalId = deviceExternalIdFromResource(resourceObj);
     if (deviceExternalId.isEmpty())
@@ -927,7 +967,7 @@ void HueSidecar::handleRelativeRotaryEvent(const QJsonObject &resourceObj, std::
     m_dialResetDueMs.insert(deviceExternalId, nowMs + kDialResetDelayMs);
 }
 
-void HueSidecar::handleButtonEvent(const QJsonObject &resourceObj, std::int64_t nowMs)
+void HueAdapterInstance::handleButtonEvent(const QJsonObject &resourceObj, std::int64_t nowMs)
 {
     const QString deviceExternalId = deviceExternalIdFromResource(resourceObj);
     if (deviceExternalId.isEmpty())
@@ -1007,7 +1047,7 @@ void HueSidecar::handleButtonEvent(const QJsonObject &resourceObj, std::int64_t 
     }
 }
 
-void HueSidecar::processPendingButtonAggregates(std::int64_t nowMs)
+void HueAdapterInstance::processPendingButtonAggregates(std::int64_t nowMs)
 {
     QStringList dueKeys;
     for (auto it = m_buttonMultiPress.cbegin(); it != m_buttonMultiPress.cend(); ++it) {
@@ -1018,7 +1058,7 @@ void HueSidecar::processPendingButtonAggregates(std::int64_t nowMs)
         finalizePendingShortPress(bindingKey);
 }
 
-void HueSidecar::finalizePendingShortPress(const QString &bindingKey)
+void HueAdapterInstance::finalizePendingShortPress(const QString &bindingKey)
 {
     auto it = m_buttonMultiPress.find(bindingKey);
     if (it == m_buttonMultiPress.end())
@@ -1063,7 +1103,7 @@ void HueSidecar::finalizePendingShortPress(const QString &bindingKey)
                             &sendError);
 }
 
-void HueSidecar::processPendingDialResets(std::int64_t nowMs)
+void HueAdapterInstance::processPendingDialResets(std::int64_t nowMs)
 {
     QStringList dueDevices;
     for (auto it = m_dialResetDueMs.cbegin(); it != m_dialResetDueMs.cend(); ++it) {
@@ -1083,7 +1123,7 @@ void HueSidecar::processPendingDialResets(std::int64_t nowMs)
     }
 }
 
-void HueSidecar::rebuildButtonResourceMap(const QJsonArray &buttonData)
+void HueAdapterInstance::rebuildButtonResourceMap(const QJsonArray &buttonData)
 {
     struct ButtonResource {
         QString resourceId;
@@ -1121,7 +1161,7 @@ void HueSidecar::rebuildButtonResourceMap(const QJsonArray &buttonData)
     }
 }
 
-bool HueSidecar::pollBridge(QString *error)
+bool HueAdapterInstance::pollBridge(QString *error)
 {
     if (HttpClient::effectiveHost(m_settings).isEmpty()) {
         if (error)
@@ -1213,12 +1253,12 @@ bool HueSidecar::pollBridge(QString *error)
     return true;
 }
 
-bool HueSidecar::fetchResourceArray(const QString &resourceType, QJsonArray *outData, QString *error)
+bool HueAdapterInstance::fetchResourceArray(const QString &resourceType, QJsonArray *outData, QString *error)
 {
     if (!outData)
         return false;
 
-    const HttpResult result = m_http.get(m_settings,
+    const HttpResult result = m_http->get(m_settings,
                                          QStringLiteral("/clip/v2/resource/%1").arg(resourceType),
                                          true,
                                          QByteArrayLiteral("application/json"),
@@ -1253,7 +1293,7 @@ bool HueSidecar::fetchResourceArray(const QString &resourceType, QJsonArray *out
     return true;
 }
 
-bool HueSidecar::publishSnapshot(const Snapshot &snapshot, QString *error)
+bool HueAdapterInstance::publishSnapshot(const Snapshot &snapshot, QString *error)
 {
     v1::Utf8String sendError;
 
@@ -1343,20 +1383,37 @@ bool HueSidecar::publishSnapshot(const Snapshot &snapshot, QString *error)
         }
     }
 
-    if (!sendScenesUpdated(snapshot.scenes, &sendError)) {
-        if (error)
-            *error = QString::fromStdString(sendError);
-        return false;
+    QSet<QString> nextScenes;
+    for (const v1::Scene &scene : snapshot.scenes) {
+        const QString sceneId = QString::fromStdString(scene.externalId);
+        if (sceneId.isEmpty())
+            continue;
+        nextScenes.insert(sceneId);
+        if (!sendSceneUpdated(scene, &sendError)) {
+            if (error)
+                *error = QString::fromStdString(sendError);
+            return false;
+        }
+    }
+    for (const QString &oldScene : std::as_const(m_knownScenes)) {
+        if (nextScenes.contains(oldScene))
+            continue;
+        if (!sendSceneRemoved(oldScene.toStdString(), &sendError)) {
+            if (error)
+                *error = QString::fromStdString(sendError);
+            return false;
+        }
     }
 
     m_devices = snapshot.devices;
     m_lightResourceByDevice = nextLightByDevice;
     m_knownRooms = nextRooms;
     m_knownGroups = nextGroups;
+    m_knownScenes = nextScenes;
     return true;
 }
 
-void HueSidecar::setConnectionState(bool connected)
+void HueAdapterInstance::setConnectionState(bool connected)
 {
     if (m_connected == connected)
         return;
@@ -1367,61 +1424,7 @@ void HueSidecar::setConnectionState(bool connected)
     }
 }
 
-phicore::adapter::v1::ActionResponse HueSidecar::invokeProbe(const sdk::AdapterActionInvokeRequest &request)
-{
-    ActionResponse response;
-    response.id = request.cmdId;
-    response.tsMs = nowMs();
-
-    ConnectionSettings settings = m_settings;
-    if (!request.paramsJson.empty()) {
-        const QJsonDocument doc = QJsonDocument::fromJson(QByteArray::fromStdString(request.paramsJson));
-        if (doc.isObject()) {
-            const QJsonObject params = doc.object();
-            if (params.contains(QStringLiteral("host")))
-                settings.host = params.value(QStringLiteral("host")).toString().trimmed();
-            if (params.contains(QStringLiteral("ip")))
-                settings.ip = params.value(QStringLiteral("ip")).toString().trimmed();
-            if (params.contains(QStringLiteral("port")))
-                settings.port = params.value(QStringLiteral("port")).toInt(settings.port);
-            if (params.contains(QStringLiteral("useTls")))
-                settings.useTls = params.value(QStringLiteral("useTls")).toBool(settings.useTls);
-            if (params.contains(QStringLiteral("appKey")))
-                settings.appKey = params.value(QStringLiteral("appKey")).toString().trimmed();
-        }
-    }
-
-    const ProbeResult probe = runProbe(m_http, settings, 10000);
-    if (!probe.ok) {
-        response.status = CmdStatus::Failure;
-        response.error = probe.error.toStdString();
-        response.resultType = v1::ActionResultType::None;
-        return response;
-    }
-
-    if (!probe.metaPatch.isEmpty()) {
-        v1::Utf8String sendError;
-        const QByteArray patch = QJsonDocument(probe.metaPatch).toJson(QJsonDocument::Compact);
-        if (!sendAdapterMetaUpdated(patch.toStdString(), &sendError)) {
-            std::cerr << "hue-ipc failed to send adapterMetaUpdated(probe): " << sendError << '\n';
-        }
-    }
-
-    response.status = CmdStatus::Success;
-    if (!probe.appKey.isEmpty()) {
-        response.resultType = v1::ActionResultType::String;
-        response.resultValue = probe.appKey.toStdString();
-    } else if (!probe.message.isEmpty()) {
-        response.resultType = v1::ActionResultType::String;
-        response.resultValue = probe.message.toStdString();
-    } else {
-        response.resultType = v1::ActionResultType::None;
-    }
-
-    return response;
-}
-
-phicore::adapter::v1::ActionResponse HueSidecar::invokeStartDeviceDiscovery(const sdk::AdapterActionInvokeRequest &request)
+phicore::adapter::v1::ActionResponse HueAdapterInstance::invokeStartDeviceDiscovery(const sdk::AdapterActionInvokeRequest &request)
 {
     ActionResponse response;
     response.id = request.cmdId;
@@ -1442,7 +1445,7 @@ phicore::adapter::v1::ActionResponse HueSidecar::invokeStartDeviceDiscovery(cons
     payload.insert(QStringLiteral("action"), actionObj);
 
     QString sendError;
-    if (!m_http.putJsonAsync(m_settings,
+    if (!m_http->putJsonAsync(m_settings,
                              QStringLiteral("/clip/v2/resource/zigbee_device_discovery/%1").arg(m_discoveryResourceId),
                              QJsonDocument(payload).toJson(QJsonDocument::Compact),
                              true,
@@ -1461,7 +1464,21 @@ phicore::adapter::v1::ActionResponse HueSidecar::invokeStartDeviceDiscovery(cons
     return response;
 }
 
-phicore::adapter::v1::CmdResponse HueSidecar::failureResponse(std::uint64_t cmdId, CmdStatus status, const QString &error) const
+void HueAdapterInstance::submitCmdResult(CmdResponse response, const char *context)
+{
+    v1::Utf8String err;
+    if (!sendResult(response, &err))
+        std::cerr << "failed to send " << context << " result: " << err << '\n';
+}
+
+void HueAdapterInstance::submitActionResult(ActionResponse response, const char *context)
+{
+    v1::Utf8String err;
+    if (!sendResult(response, &err))
+        std::cerr << "failed to send " << context << " result: " << err << '\n';
+}
+
+phicore::adapter::v1::CmdResponse HueAdapterInstance::failureResponse(std::uint64_t cmdId, CmdStatus status, const QString &error) const
 {
     CmdResponse response;
     response.id = cmdId;
@@ -1471,7 +1488,7 @@ phicore::adapter::v1::CmdResponse HueSidecar::failureResponse(std::uint64_t cmdI
     return response;
 }
 
-phicore::adapter::v1::CmdResponse HueSidecar::successResponse(std::uint64_t cmdId) const
+phicore::adapter::v1::CmdResponse HueAdapterInstance::successResponse(std::uint64_t cmdId) const
 {
     CmdResponse response;
     response.id = cmdId;

@@ -155,6 +155,7 @@ phicore::adapter::v1::AdapterCapabilities capabilities()
         | v1::AdapterRequirement::AppKey
         | v1::AdapterRequirement::Port;
     caps.flags = v1::AdapterFlag::SupportsProbe
+        | v1::AdapterFlag::SupportsDiscovery
         | v1::AdapterFlag::SupportsRename
         | v1::AdapterFlag::RequiresPolling;
 

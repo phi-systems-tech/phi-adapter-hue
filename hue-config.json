@@ -1,4 +1,11 @@
 {
+  "discovery": [
+    {
+      "kind": "mdns",
+      "mdnsServiceType": "_hue._tcp",
+      "defaultPort": 443
+    }
+  ],
   "modelIdToProductNumber": {
     "046677577490": "046677577490",
     "046677590130": "046677590161",

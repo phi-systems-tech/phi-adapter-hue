@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 
 #include <QByteArray>
 #include <QHash>
@@ -9,6 +10,7 @@
 #include <QNetworkReply>
 #include <QSet>
 #include <QString>
+#include <QTimer>
 
 #include "hue_http.h"
 #include "hue_model.h"
@@ -16,43 +18,30 @@
 
 namespace phicore::hue::ipc {
 
-class HueSidecar final : public phicore::adapter::sdk::AdapterSidecar
+class HueAdapterInstance final : public phicore::adapter::sdk::AdapterInstance
 {
 public:
-    HueSidecar();
-
-    void tick();
+    HueAdapterInstance();
 
 protected:
+    bool start() override;
+    void stop() override;
     void onConnected() override;
     void onDisconnected() override;
-    void onBootstrap(const phicore::adapter::sdk::BootstrapRequest &request) override;
     void onConfigChanged(const phicore::adapter::sdk::ConfigChangedRequest &request) override;
 
-    phicore::adapter::v1::CmdResponse onChannelInvoke(
-        const phicore::adapter::sdk::ChannelInvokeRequest &request) override;
-    phicore::adapter::v1::ActionResponse onAdapterActionInvoke(
-        const phicore::adapter::sdk::AdapterActionInvokeRequest &request) override;
-    phicore::adapter::v1::CmdResponse onDeviceNameUpdate(
-        const phicore::adapter::sdk::DeviceNameUpdateRequest &request) override;
-    phicore::adapter::v1::CmdResponse onDeviceEffectInvoke(
-        const phicore::adapter::sdk::DeviceEffectInvokeRequest &request) override;
-    phicore::adapter::v1::CmdResponse onSceneInvoke(
-        const phicore::adapter::sdk::SceneInvokeRequest &request) override;
-
-    phicore::adapter::v1::Utf8String displayName() const override;
-    phicore::adapter::v1::Utf8String description() const override;
-    phicore::adapter::v1::Utf8String iconSvg() const override;
-    phicore::adapter::v1::Utf8String apiVersion() const override;
-    int timeoutMs() const override;
-    phicore::adapter::v1::AdapterCapabilities capabilities() const override;
-    phicore::adapter::v1::JsonText configSchemaJson() const override;
+    void onChannelInvoke(const phicore::adapter::sdk::ChannelInvokeRequest &request) override;
+    void onAdapterActionInvoke(const phicore::adapter::sdk::AdapterActionInvokeRequest &request) override;
+    void onDeviceNameUpdate(const phicore::adapter::sdk::DeviceNameUpdateRequest &request) override;
+    void onDeviceEffectInvoke(const phicore::adapter::sdk::DeviceEffectInvokeRequest &request) override;
+    void onSceneInvoke(const phicore::adapter::sdk::SceneInvokeRequest &request) override;
 
 private:
     using CmdResponse = phicore::adapter::v1::CmdResponse;
     using ActionResponse = phicore::adapter::v1::ActionResponse;
     using CmdStatus = phicore::adapter::v1::CmdStatus;
 
+    void tick();
     static std::int64_t nowMs();
 
     void applyRuntimeConfig(const phicore::adapter::sdk::ConfigChangedRequest &request);
@@ -78,15 +67,22 @@ private:
                                  const QJsonObject &resourceObj) const;
     void rebuildButtonResourceMap(const QJsonArray &buttonData);
 
-    ActionResponse invokeProbe(const phicore::adapter::sdk::AdapterActionInvokeRequest &request);
+    CmdResponse handleChannelInvoke(const phicore::adapter::sdk::ChannelInvokeRequest &request);
+    ActionResponse handleAdapterActionInvoke(const phicore::adapter::sdk::AdapterActionInvokeRequest &request);
+    CmdResponse handleDeviceNameUpdate(const phicore::adapter::sdk::DeviceNameUpdateRequest &request);
+    CmdResponse handleDeviceEffectInvoke(const phicore::adapter::sdk::DeviceEffectInvokeRequest &request);
+    CmdResponse handleSceneInvoke(const phicore::adapter::sdk::SceneInvokeRequest &request);
     ActionResponse invokeStartDeviceDiscovery(const phicore::adapter::sdk::AdapterActionInvokeRequest &request);
+
+    void submitCmdResult(CmdResponse response, const char *context);
+    void submitActionResult(ActionResponse response, const char *context);
 
     CmdResponse failureResponse(std::uint64_t cmdId, CmdStatus status, const QString &error) const;
     CmdResponse successResponse(std::uint64_t cmdId) const;
 
-    QNetworkAccessManager m_requestNetwork;
-    QNetworkAccessManager m_eventStreamNetwork;
-    HttpClient m_http;
+    std::unique_ptr<QNetworkAccessManager> m_requestNetwork;
+    std::unique_ptr<QNetworkAccessManager> m_eventStreamNetwork;
+    std::unique_ptr<HttpClient> m_http;
 
     phicore::adapter::v1::Adapter m_adapterInfo;
     ConnectionSettings m_settings;
@@ -125,6 +121,8 @@ private:
     QString m_discoveryResourceId;
     QSet<QString> m_knownRooms;
     QSet<QString> m_knownGroups;
+    QSet<QString> m_knownScenes;
+    std::unique_ptr<QTimer> m_tickTimer;
 };
 
 } // namespace phicore::hue::ipc
