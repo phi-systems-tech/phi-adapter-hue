@@ -99,10 +99,10 @@ QJsonObject section(const QString &title, const QString &description, const QJso
 
     QJsonObject defaults;
     defaults.insert(QStringLiteral("span"), responsive(24, 24, 12, 12, 12, 12));
-    defaults.insert(QStringLiteral("labelPosition"), QStringLiteral("Left"));
+    defaults.insert(QStringLiteral("labelPosition"), QStringLiteral("top"));
     defaults.insert(QStringLiteral("labelSpan"), 8);
     defaults.insert(QStringLiteral("controlSpan"), 16);
-    defaults.insert(QStringLiteral("actionPosition"), QStringLiteral("Inline"));
+    defaults.insert(QStringLiteral("actionPosition"), QStringLiteral("inline"));
     defaults.insert(QStringLiteral("actionSpan"), 6);
     layout.insert(QStringLiteral("defaults"), defaults);
 
