@@ -4,12 +4,11 @@
 #include <cstdlib>
 #include <iostream>
 #include <memory>
-#include <thread>
 
 #include <QCoreApplication>
-#include <QEventLoop>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QTimer>
 
 #include "hue_http.h"
 #include "hue_probe.h"
@@ -265,15 +264,25 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    while (g_running.load()) {
-        if (!host.pollOnce(std::chrono::milliseconds(250), &error)) {
-            std::cerr << "poll failed: " << error << '\n';
-            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    constexpr std::chrono::milliseconds kPollTimeout{16};
+
+    QTimer hostPollTimer;
+    QObject::connect(&hostPollTimer, &QTimer::timeout, [&]() {
+        if (!g_running.load(std::memory_order_relaxed)) {
+            app.quit();
+            return;
         }
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
-    }
+
+        if (!host.pollOnce(kPollTimeout, &error)) {
+            std::cerr << "poll failed: " << error << '\n';
+        }
+    });
+    hostPollTimer.start(16);
+
+    int execResult = app.exec();
+    hostPollTimer.stop();
 
     host.stop();
     std::cerr << "stopping phi_adapter_hue_ipc" << '\n';
-    return 0;
+    return execResult;
 }

@@ -1248,8 +1248,6 @@ bool HueAdapterInstance::pollBridge(QString *error)
         return false;
 
     setConnectionState(true);
-    v1::Utf8String sendError;
-    sendFullSyncCompleted(&sendError);
     return true;
 }
 
