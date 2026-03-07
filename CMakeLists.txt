@@ -42,6 +42,17 @@ if(PHI_ADAPTER_HUE_BUILD_IPC)
     if(NOT TARGET phi::adapter-sdk)
         message(FATAL_ERROR "phi-adapter-sdk target phi::adapter-sdk not found")
     endif()
+    if(NOT TARGET phi::adapter-sdk-qt)
+        if(PHI_ADAPTER_HUE_USE_LOCAL_ADAPTER_SDK AND EXISTS "${PHI_ADAPTER_SDK_SOURCE_DIR}/CMakeLists.txt")
+            message(FATAL_ERROR "phi::adapter-sdk was found locally but without Qt target; install phi-adapter-sdk-qt or enable Qt helpers in phi-adapter-sdk")
+        else()
+            message(STATUS "Using installed phi-adapter-sdk-qt via find_package")
+            find_package(phi-adapter-sdk-qt CONFIG REQUIRED)
+        endif()
+    endif()
+    if(NOT TARGET phi::adapter-sdk-qt)
+        message(FATAL_ERROR "phi-adapter-sdk target phi::adapter-sdk-qt not found")
+    endif()
 
     add_executable(phi_adapter_hue_ipc
         src/main.cpp
