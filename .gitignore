@@ -21,3 +21,5 @@ debian/*/usr/
 /*.dsc
 /*.tar.*
 /*.build
+
+/build-system/
