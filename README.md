@@ -64,13 +64,13 @@ Adapter settings are configured through phi-core:
 ### Build
 
 ```bash
-cmake -S . -B build
-cmake --build build --parallel
+cmake -S . -B ../build/phi-adapter-hue/release-ninja -G Ninja
+cmake --build ../build/phi-adapter-hue/release-ninja --parallel
 ```
 
 ### Installation
 
-- Build output: `build/plugins/adapters/phi_adapter_hue_ipc`
+- Build output: `../build/phi-adapter-hue/release-ninja/plugins/adapters/phi_adapter_hue_ipc`
 - Deploy to: `/opt/phi/plugins/adapters/`
 
 ### Troubleshooting
