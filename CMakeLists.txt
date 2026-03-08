@@ -6,6 +6,8 @@ project(phi-adapter-hue
     LANGUAGES CXX
 )
 
+include(GNUInstallDirs)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -87,11 +89,11 @@ if(PHI_ADAPTER_HUE_BUILD_IPC)
     )
 
     install(TARGETS phi_adapter_hue_ipc
-        RUNTIME DESTINATION lib/phi/plugins/adapters
+        RUNTIME DESTINATION ${CMAKE_INSTALL_LIBDIR}/phi/plugins/adapters
     )
 
     install(FILES
         ${CMAKE_CURRENT_SOURCE_DIR}/hue-config.json
-        DESTINATION lib/phi/plugins/adapters
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/phi/plugins/adapters
     )
 endif()
