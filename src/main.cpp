@@ -19,7 +19,7 @@
 
 namespace {
 
-namespace sdk = phicore::adapter::sdk;
+namespace phi = phicore::adapter::sdk;
 namespace v1 = phicore::adapter::v1;
 using phicore::hue::ipc::ConnectionSettings;
 using phicore::hue::ipc::HttpClient;
@@ -102,20 +102,20 @@ void applyProbeParams(const QJsonObject &params, ConnectionSettings *settings)
         settings->appKey = params.value(QStringLiteral("appKey")).toString().trimmed();
 }
 
-class HueFactory final : public sdk::AdapterFactory
+class HueFactory final : public phi::AdapterFactory
 {
 protected:
-    void onBootstrap(const sdk::BootstrapRequest &request) override
+    void onBootstrap(const phi::BootstrapRequest &request) override
     {
         m_factorySettings = settingsFromAdapter(request.adapter);
     }
 
-    void onFactoryConfigChanged(const sdk::ConfigChangedRequest &request) override
+    void onFactoryConfigChanged(const phi::ConfigChangedRequest &request) override
     {
         m_factorySettings = settingsFromAdapter(request.adapter);
     }
 
-    void onFactoryActionInvoke(const sdk::AdapterActionInvokeRequest &request) override
+    void onFactoryActionInvoke(const phi::AdapterActionInvokeRequest &request) override
     {
         submitFactoryActionResult(handleFactoryAction(request), "factory.action.invoke");
     }
@@ -165,21 +165,21 @@ protected:
         return phicore::hue::ipc::configSchemaJson();
     }
 
-    std::unique_ptr<sdk::InstanceExecutionBackend> createInstanceExecutionBackend(
-        const sdk::ExternalId &externalId) override
+    std::unique_ptr<phi::InstanceExecutionBackend> createInstanceExecutionBackend(
+        const phi::ExternalId &externalId) override
     {
         (void)externalId;
-        return sdk::qt::createInstanceExecutionBackend();
+        return phi::qt::createInstanceExecutionBackend();
     }
 
-    std::unique_ptr<sdk::AdapterInstance> createInstance(const sdk::ExternalId &externalId) override
+    std::unique_ptr<phi::AdapterInstance> createInstance(const phi::ExternalId &externalId) override
     {
         std::cerr << "create hue instance externalId=" << externalId << '\n';
         return std::make_unique<phicore::hue::ipc::HueAdapterInstance>();
     }
 
 private:
-    v1::ActionResponse handleFactoryAction(const sdk::AdapterActionInvokeRequest &request)
+    v1::ActionResponse handleFactoryAction(const phi::AdapterActionInvokeRequest &request)
     {
         v1::ActionResponse response;
         response.id = request.cmdId;
@@ -256,7 +256,7 @@ int main(int argc, char **argv)
               << " socket=" << socketPath << '\n';
 
     HueFactory factory;
-    sdk::SidecarHost host(socketPath, factory);
+    phi::SidecarHost host(socketPath, factory);
 
     v1::Utf8String error;
     if (!host.start(&error)) {

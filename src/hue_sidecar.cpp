@@ -24,7 +24,7 @@ namespace phicore::hue::ipc {
 namespace {
 
 namespace v1 = phicore::adapter::v1;
-namespace sdk = phicore::adapter::sdk;
+namespace phi = phicore::adapter::sdk;
 
 constexpr int kButtonMultiPressWindowMs = 1300;
 constexpr int kButtonLongPressRepeatWindowMs = 800;
@@ -272,7 +272,7 @@ void HueAdapterInstance::tick()
         setConnectionState(false);
         if (!error.isEmpty()) {
             std::cerr << "hue-ipc poll failed: " << error.toStdString() << '\n';
-            sendError(error.toStdString());
+            sendError(phi::LogCategory::Network, error.toStdString());
         }
         m_nextPollDueMs = now + std::max(1000, m_retryIntervalMs);
         return;
@@ -311,7 +311,7 @@ void HueAdapterInstance::onDisconnected()
     std::cerr << "hue-ipc disconnected" << '\n';
 }
 
-void HueAdapterInstance::onConfigChanged(const sdk::ConfigChangedRequest &request)
+void HueAdapterInstance::onConfigChanged(const phi::ConfigChangedRequest &request)
 {
     applyRuntimeConfig(request);
     m_runtimeConfigured = true;
@@ -329,12 +329,12 @@ void HueAdapterInstance::onConfigChanged(const sdk::ConfigChangedRequest &reques
               << '\n';
 }
 
-void HueAdapterInstance::onChannelInvoke(const sdk::ChannelInvokeRequest &request)
+void HueAdapterInstance::onChannelInvoke(const phi::ChannelInvokeRequest &request)
 {
     submitCmdResult(handleChannelInvoke(request), "channel.invoke");
 }
 
-phicore::adapter::v1::CmdResponse HueAdapterInstance::handleChannelInvoke(const sdk::ChannelInvokeRequest &request)
+phicore::adapter::v1::CmdResponse HueAdapterInstance::handleChannelInvoke(const phi::ChannelInvokeRequest &request)
 {
     if (!m_runtimeConfigured)
         return failureResponse(request.cmdId, CmdStatus::TemporarilyOffline, QStringLiteral("Adapter not configured"));
@@ -408,13 +408,13 @@ phicore::adapter::v1::CmdResponse HueAdapterInstance::handleChannelInvoke(const 
     return resp;
 }
 
-void HueAdapterInstance::onAdapterActionInvoke(const sdk::AdapterActionInvokeRequest &request)
+void HueAdapterInstance::onAdapterActionInvoke(const phi::AdapterActionInvokeRequest &request)
 {
     submitActionResult(handleAdapterActionInvoke(request), "adapter.action.invoke");
 }
 
 phicore::adapter::v1::ActionResponse HueAdapterInstance::handleAdapterActionInvoke(
-    const sdk::AdapterActionInvokeRequest &request)
+    const phi::AdapterActionInvokeRequest &request)
 {
     const QString actionId = QString::fromStdString(request.actionId);
     if (actionId == QLatin1String("startDeviceDiscovery"))
@@ -428,13 +428,13 @@ phicore::adapter::v1::ActionResponse HueAdapterInstance::handleAdapterActionInvo
     return resp;
 }
 
-void HueAdapterInstance::onDeviceNameUpdate(const sdk::DeviceNameUpdateRequest &request)
+void HueAdapterInstance::onDeviceNameUpdate(const phi::DeviceNameUpdateRequest &request)
 {
     submitCmdResult(handleDeviceNameUpdate(request), "device.name.update");
 }
 
 phicore::adapter::v1::CmdResponse HueAdapterInstance::handleDeviceNameUpdate(
-    const sdk::DeviceNameUpdateRequest &request)
+    const phi::DeviceNameUpdateRequest &request)
 {
     if (request.deviceExternalId.empty())
         return failureResponse(request.cmdId, CmdStatus::InvalidArgument, QStringLiteral("deviceExternalId missing"));
@@ -470,13 +470,13 @@ phicore::adapter::v1::CmdResponse HueAdapterInstance::handleDeviceNameUpdate(
     return successResponse(request.cmdId);
 }
 
-void HueAdapterInstance::onDeviceEffectInvoke(const sdk::DeviceEffectInvokeRequest &request)
+void HueAdapterInstance::onDeviceEffectInvoke(const phi::DeviceEffectInvokeRequest &request)
 {
     submitCmdResult(handleDeviceEffectInvoke(request), "device.effect.invoke");
 }
 
 phicore::adapter::v1::CmdResponse HueAdapterInstance::handleDeviceEffectInvoke(
-    const sdk::DeviceEffectInvokeRequest &request)
+    const phi::DeviceEffectInvokeRequest &request)
 {
     if (request.deviceExternalId.empty()) {
         return failureResponse(request.cmdId,
@@ -569,12 +569,12 @@ phicore::adapter::v1::CmdResponse HueAdapterInstance::handleDeviceEffectInvoke(
     return resp;
 }
 
-void HueAdapterInstance::onSceneInvoke(const sdk::SceneInvokeRequest &request)
+void HueAdapterInstance::onSceneInvoke(const phi::SceneInvokeRequest &request)
 {
     submitCmdResult(handleSceneInvoke(request), "scene.invoke");
 }
 
-phicore::adapter::v1::CmdResponse HueAdapterInstance::handleSceneInvoke(const sdk::SceneInvokeRequest &request)
+phicore::adapter::v1::CmdResponse HueAdapterInstance::handleSceneInvoke(const phi::SceneInvokeRequest &request)
 {
     if (request.sceneExternalId.empty())
         return failureResponse(request.cmdId, CmdStatus::InvalidArgument, QStringLiteral("sceneExternalId missing"));
@@ -621,7 +621,7 @@ std::int64_t HueAdapterInstance::nowMs()
     return QDateTime::currentMSecsSinceEpoch();
 }
 
-void HueAdapterInstance::applyRuntimeConfig(const sdk::ConfigChangedRequest &request)
+void HueAdapterInstance::applyRuntimeConfig(const phi::ConfigChangedRequest &request)
 {
     const v1::Adapter &adapter = request.adapter;
     m_adapterInfo = adapter;
@@ -1422,7 +1422,7 @@ void HueAdapterInstance::setConnectionState(bool connected)
     }
 }
 
-phicore::adapter::v1::ActionResponse HueAdapterInstance::invokeStartDeviceDiscovery(const sdk::AdapterActionInvokeRequest &request)
+phicore::adapter::v1::ActionResponse HueAdapterInstance::invokeStartDeviceDiscovery(const phi::AdapterActionInvokeRequest &request)
 {
     ActionResponse response;
     response.id = request.cmdId;
