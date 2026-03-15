@@ -9,6 +9,6 @@ Homepage: https://github.com/phi-systems-tech/phi-adapter-hue
 
 Package: phi-adapter-hue
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends}, phi-adapter-sdk, phi-adapter-sdk-qt
 Description: PHI Philips Hue adapter IPC sidecar
  IPC sidecar executable for PHI core to integrate Philips Hue bridges and devices.
