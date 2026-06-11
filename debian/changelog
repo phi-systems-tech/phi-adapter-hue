@@ -1,3 +1,9 @@
+phi-adapter-hue (0.0~git20260611.45fff55-1) trixie; urgency=medium
+
+  * Rebuild package with multiarch shlibdeps path.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Thu, 11 Jun 2026 00:00:00 +0200
+
 phi-adapter-hue (0.0~git20260611.6de45d0-1) trixie; urgency=medium
 
   * Rebuild package from current adapter snapshot.
