@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <iostream>
+#include <limits>
 #include <optional>
 
 #include <QDateTime>
@@ -79,6 +81,29 @@ std::optional<bool> scalarAsBool(const v1::ScalarValue &value)
             return false;
     }
     return std::nullopt;
+}
+
+bool colorRequestRgb(const phi::ChannelInvokeRequest &request, double *r01, double *g01, double *b01)
+{
+    if (request.valueJson.empty())
+        return false;
+
+    const QJsonDocument doc = QJsonDocument::fromJson(QByteArray::fromStdString(request.valueJson));
+    if (!doc.isObject())
+        return false;
+
+    const QJsonObject obj = doc.object();
+    const double r = obj.value(QStringLiteral("r")).toDouble(std::numeric_limits<double>::quiet_NaN());
+    const double g = obj.value(QStringLiteral("g")).toDouble(std::numeric_limits<double>::quiet_NaN());
+    const double b = obj.value(QStringLiteral("b")).toDouble(std::numeric_limits<double>::quiet_NaN());
+    if (!std::isfinite(r) || !std::isfinite(g) || !std::isfinite(b))
+        return false;
+
+    const bool looks255 = r > 1.0 || g > 1.0 || b > 1.0;
+    *r01 = looks255 ? std::clamp(r / 255.0, 0.0, 1.0) : std::clamp(r, 0.0, 1.0);
+    *g01 = looks255 ? std::clamp(g / 255.0, 0.0, 1.0) : std::clamp(g, 0.0, 1.0);
+    *b01 = looks255 ? std::clamp(b / 255.0, 0.0, 1.0) : std::clamp(b, 0.0, 1.0);
+    return true;
 }
 
 QString extractHueError(const QByteArray &payload)
@@ -403,6 +428,12 @@ phicore::adapter::v1::CmdResponse HueAdapterInstance::handleChannelInvoke(const 
                                         &sendError);
             }
         }
+    } else if (channelExternalId == QLatin1String("color")) {
+        double r = 0.0;
+        double g = 0.0;
+        double b = 0.0;
+        if (colorRequestRgb(request, &r, &g, &b))
+            sendChannelColorStateUpdated(request.deviceExternalId, request.channelExternalId, r, g, b, nowMs(), &sendError);
     }
 
     return resp;
@@ -1327,6 +1358,19 @@ bool HueAdapterInstance::publishSnapshot(const Snapshot &snapshot, QString *erro
                                          channel.lastValue,
                                          ts,
                                          &sendError)) {
+                if (error)
+                    *error = QString::fromStdString(sendError);
+                return false;
+            }
+        }
+
+        if (entry.state.hasColorXy) {
+            double r = 0.0;
+            double g = 0.0;
+            double b = 0.0;
+            const double brightness = entry.state.hasBrightness ? entry.state.brightness / 100.0 : 1.0;
+            xyToRgb(entry.state.colorX, entry.state.colorY, brightness, &r, &g, &b);
+            if (!sendChannelColorStateUpdated(entry.device.externalId, "color", r, g, b, ts, &sendError)) {
                 if (error)
                     *error = QString::fromStdString(sendError);
                 return false;

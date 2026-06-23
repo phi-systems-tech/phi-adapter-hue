@@ -86,6 +86,15 @@ v1::Channel makeColorChannel(const QJsonObject &colorObj)
     channel.dataType = v1::ChannelDataType::Color;
     channel.flags = v1::kChannelFlagDefaultWrite;
 
+    QJsonObject meta;
+    const QJsonObject xyObj = colorObj.value(QStringLiteral("xy")).toObject();
+    if (!xyObj.isEmpty()) {
+        QJsonObject nativeValue;
+        nativeValue.insert(QStringLiteral("space"), QStringLiteral("cie1931_xy"));
+        nativeValue.insert(QStringLiteral("xy"), xyObj);
+        meta.insert(QStringLiteral("nativeValue"), nativeValue);
+    }
+
     const QJsonObject gamutObj = colorObj.value(QStringLiteral("gamut")).toObject();
     if (!gamutObj.isEmpty()) {
         QJsonArray gamut;
@@ -105,9 +114,12 @@ v1::Channel makeColorChannel(const QJsonObject &colorObj)
             QJsonObject caps;
             caps.insert(QStringLiteral("space"), QStringLiteral("cie1931_xy"));
             caps.insert(QStringLiteral("gamut"), gamut);
-            channel.metaJson = QJsonDocument(caps).toJson(QJsonDocument::Compact).toStdString();
+            meta.insert(QStringLiteral("colorCapabilities"), caps);
         }
     }
+
+    if (!meta.isEmpty())
+        channel.metaJson = QJsonDocument(meta).toJson(QJsonDocument::Compact).toStdString();
 
     return channel;
 }
@@ -987,6 +999,36 @@ void rgbToXy(double r01, double g01, double b01, double *x, double *y)
 
     *x = std::clamp(X / sum, 0.0, 1.0);
     *y = std::clamp(Y / sum, 0.0, 1.0);
+}
+
+void xyToRgb(double x, double y, double brightness01, double *r01, double *g01, double *b01)
+{
+    const double safeY = std::max(y, 1e-6);
+    const double Y = std::clamp(brightness01, 0.0, 1.0);
+    const double X = (Y / safeY) * x;
+    const double Z = (Y / safeY) * (1.0 - x - y);
+
+    double r = 3.2406 * X - 1.5372 * Y - 0.4986 * Z;
+    double g = -0.9689 * X + 1.8758 * Y + 0.0415 * Z;
+    double b = 0.0557 * X - 0.2040 * Y + 1.0570 * Z;
+
+    const double maxValue = std::max({r, g, b});
+    if (maxValue > 1.0) {
+        r /= maxValue;
+        g /= maxValue;
+        b /= maxValue;
+    }
+
+    auto gamma = [](double value) {
+        const double clamped = std::clamp(value, 0.0, 1.0);
+        if (clamped <= 0.0031308)
+            return 12.92 * clamped;
+        return 1.055 * std::pow(clamped, 1.0 / 2.4) - 0.055;
+    };
+
+    *r01 = gamma(r);
+    *g01 = gamma(g);
+    *b01 = gamma(b);
 }
 
 QByteArray buildLightCommandPayload(const QString &channelExternalId,

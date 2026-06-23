@@ -53,5 +53,6 @@ QByteArray buildLightCommandPayload(const QString &channelExternalId,
                                     QString *error = nullptr);
 
 void rgbToXy(double r01, double g01, double b01, double *x, double *y);
+void xyToRgb(double x, double y, double brightness01, double *r01, double *g01, double *b01);
 
 } // namespace phicore::hue::ipc
