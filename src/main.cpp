@@ -207,10 +207,11 @@ private:
         }
 
         if (!probe.metaPatch.isEmpty()) {
-            const QByteArray patch = QJsonDocument(probe.metaPatch).toJson(QJsonDocument::Compact);
-            v1::Utf8String patchError;
-            if (!sendAdapterMetaUpdated(patch.toStdString(), &patchError))
-                std::cerr << "hue-ipc failed to send adapterMetaUpdated(probe): " << patchError << '\n';
+            // Factory-scope EventAdapterMetaUpdated is not part of the v1
+            // contract (core rejects it); probe results such as the created
+            // clientKey travel back as form value updates on the response.
+            response.formValuesJson =
+                QJsonDocument(probe.metaPatch).toJson(QJsonDocument::Compact).toStdString();
         }
 
         response.status = v1::CmdStatus::Success;
