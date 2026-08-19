@@ -15,6 +15,7 @@
 #include "hue_schema.h"
 #include "hue_sidecar.h"
 #include "phi/adapter/sdk/qt/instance_execution_backend_qt.h"
+#include "phi/adapter/sdk/qt/sidecar_driver_qt.h"
 #include "phi/adapter/sdk/sidecar.h"
 
 namespace {
@@ -259,31 +260,28 @@ int main(int argc, char **argv)
     HueFactory factory;
     phi::SidecarHost host(socketPath, factory);
 
+    // The driver watches the host's poll descriptor from the Qt event loop:
+    // no polling interval, no idle wakeups, and inbound frames as well as
+    // outbound work from worker threads are handled as they arrive.
+    phicore::adapter::sdk::qt::SidecarDriver driver(host);
+
     v1::Utf8String error;
-    if (!host.start(&error)) {
+    if (!driver.start(&error)) {
         std::cerr << "failed to start sidecar host: " << error << '\n';
         return 1;
     }
 
-    constexpr std::chrono::milliseconds kPollTimeout{16};
-
-    QTimer hostPollTimer;
-    QObject::connect(&hostPollTimer, &QTimer::timeout, [&]() {
-        if (!g_running.load(std::memory_order_relaxed)) {
+    // Signal handlers only flip a flag; a slow timer turns it into a clean
+    // Qt shutdown.
+    QTimer shutdownTimer;
+    QObject::connect(&shutdownTimer, &QTimer::timeout, [&]() {
+        if (!g_running.load(std::memory_order_relaxed))
             app.quit();
-            return;
-        }
-
-        if (!host.pollOnce(kPollTimeout, &error)) {
-            std::cerr << "poll failed: " << error << '\n';
-        }
     });
-    hostPollTimer.start(16);
+    shutdownTimer.start(250);
 
-    int execResult = app.exec();
-    hostPollTimer.stop();
-
-    host.stop();
+    const int execResult = app.exec();
+    driver.stop();
     std::cerr << "stopping phi_adapter_hue_ipc" << '\n';
     return execResult;
 }
