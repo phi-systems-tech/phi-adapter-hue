@@ -8,6 +8,7 @@
 #include <QCoreApplication>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QNetworkAccessManager>
 #include <QTimer>
 
 #include "hue_http.h"
@@ -173,6 +174,21 @@ protected:
         return phi::qt::createInstanceExecutionBackend();
     }
 
+    // The bridge probe is a blocking HTTP round trip with a 10s budget; on the
+    // host poll thread it froze IPC for every instance of this sidecar.
+    std::unique_ptr<phi::InstanceExecutionBackend> createFactoryExecutionBackend() override
+    {
+        return phi::qt::createFactoryExecutionBackend();
+    }
+
+    void onFactoryStopping() override
+    {
+        // Both objects live on the factory backend thread; destroy them while
+        // that thread is still alive.
+        m_http.reset();
+        m_probeNetwork.reset();
+    }
+
     std::unique_ptr<phi::AdapterInstance> createInstance(const phi::ExternalId &externalId) override
     {
         std::cerr << "create hue instance externalId=" << externalId << '\n';
@@ -199,7 +215,7 @@ private:
                 applyProbeParams(doc.object(), &settings);
         }
 
-        const phicore::hue::ipc::ProbeResult probe = phicore::hue::ipc::runProbe(m_http, settings, 10000);
+        const phicore::hue::ipc::ProbeResult probe = phicore::hue::ipc::runProbe(ensureHttp(), settings, 10000);
         if (!probe.ok) {
             response.status = v1::CmdStatus::Failure;
             response.error = probe.error.toStdString();
@@ -235,8 +251,22 @@ private:
             std::cerr << "failed to send " << context << " result: " << error << '\n';
     }
 
-    QNetworkAccessManager m_probeNetwork;
-    HttpClient m_http{&m_probeNetwork};
+    // Created on first use, i.e. on the factory backend thread: a
+    // QNetworkAccessManager built in the constructor would be bound to the main
+    // thread and never process replies from here.
+    HttpClient &ensureHttp()
+    {
+        if (!m_http) {
+            m_probeNetwork = std::make_unique<QNetworkAccessManager>();
+            m_http = std::make_unique<HttpClient>(m_probeNetwork.get());
+        }
+        return *m_http;
+    }
+
+    std::unique_ptr<QNetworkAccessManager> m_probeNetwork;
+    std::unique_ptr<HttpClient> m_http;
+    // Written by onBootstrap/onFactoryConfigChanged and read by the probe - all
+    // on the factory backend thread, so no locking is needed.
     ConnectionSettings m_factorySettings;
 };
 
