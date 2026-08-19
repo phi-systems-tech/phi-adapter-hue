@@ -16,11 +16,23 @@ namespace phicore::hue::ipc {
 
 namespace {
 constexpr int kDefaultRequestTimeoutMs = 10000;
+// How often a pending request checks whether it should give up.
+constexpr int kCancelPollIntervalMs = 50;
 }
 
 HttpClient::HttpClient(QNetworkAccessManager *manager)
     : m_manager(manager)
 {
+}
+
+void HttpClient::setCancelProbe(std::function<bool()> probe)
+{
+    m_cancelProbe = std::move(probe);
+}
+
+bool HttpClient::cancelled() const
+{
+    return m_cancelProbe && m_cancelProbe();
 }
 
 QString HttpClient::effectiveHost(const ConnectionSettings &settings)
@@ -216,6 +228,7 @@ HttpResult HttpClient::request(const ConnectionSettings &settings,
     QTimer timer;
     timer.setSingleShot(true);
     bool timedOut = false;
+    bool aborted = false;
 
     QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
     QObject::connect(&timer, &QTimer::timeout, &loop, [&]() {
@@ -223,8 +236,28 @@ HttpResult HttpClient::request(const ConnectionSettings &settings,
         loop.quit();
     });
 
+    // Shutdown must not have to wait out the request timeout (F-33).
+    QTimer cancelPoll;
+    if (m_cancelProbe) {
+        cancelPoll.setInterval(kCancelPollIntervalMs);
+        QObject::connect(&cancelPoll, &QTimer::timeout, &loop, [&]() {
+            if (!cancelled())
+                return;
+            aborted = true;
+            loop.quit();
+        });
+        cancelPoll.start();
+    }
+
     timer.start(timeoutMs > 0 ? timeoutMs : kDefaultRequestTimeoutMs);
     loop.exec();
+
+    if (aborted) {
+        reply->abort();
+        reply->deleteLater();
+        result.error = QStringLiteral("Request cancelled: adapter is stopping");
+        return result;
+    }
 
     if (timedOut) {
         reply->abort();

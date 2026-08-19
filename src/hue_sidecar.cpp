@@ -215,8 +215,12 @@ bool HueAdapterInstance::start()
         m_requestNetwork = std::make_unique<QNetworkAccessManager>();
     if (!m_eventStreamNetwork)
         m_eventStreamNetwork = std::make_unique<QNetworkAccessManager>();
-    if (!m_http)
+    if (!m_http) {
         m_http = std::make_unique<HttpClient>(m_requestNetwork.get());
+        // Requests give up when the host asks this instance to stop, instead of
+        // holding teardown for the full request timeout (F-33).
+        m_http->setCancelProbe([this]() { return stopRequested(); });
+    }
 
     m_runtimeConfigured = false;
     m_nextPollDueMs = 0;

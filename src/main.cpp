@@ -259,6 +259,8 @@ private:
         if (!m_http) {
             m_probeNetwork = std::make_unique<QNetworkAccessManager>();
             m_http = std::make_unique<HttpClient>(m_probeNetwork.get());
+            // A 10s probe must not outlive the shutdown budget (F-33).
+            m_http->setCancelProbe([this]() { return stopRequested(); });
         }
         return *m_http;
     }

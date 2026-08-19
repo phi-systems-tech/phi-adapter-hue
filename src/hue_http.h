@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 #include <QString>
 #include <QByteArray>
 
@@ -54,6 +56,17 @@ public:
 
     static QString effectiveHost(const ConnectionSettings &settings);
 
+    /**
+     * @brief Install a "should I give up" predicate for the blocking requests.
+     *
+     * Polled while a request waits, so a shutdown does not have to sit out the
+     * full request timeout (finding F-33). Callers pass
+     * `[this] { return stopRequested(); }`; the SDK sets that flag from the host
+     * thread, which is the only way this thread learns about the stop while it is
+     * parked in a nested event loop.
+     */
+    void setCancelProbe(std::function<bool()> probe);
+
 private:
     bool buildRequest(const ConnectionSettings &settings,
                       const QString &path,
@@ -71,7 +84,10 @@ private:
                        const QByteArray &accept,
                        int timeoutMs) const;
 
+    bool cancelled() const;
+
     QNetworkAccessManager *m_manager = nullptr;
+    std::function<bool()> m_cancelProbe;
 };
 
 } // namespace phicore::hue::ipc
