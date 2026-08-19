@@ -1,3 +1,12 @@
+phi-adapter-hue (0.0~git20260819.d2dd2b2-1) trixie; urgency=medium
+
+  * Run the bridge probe on a factory execution backend instead of the host poll
+    thread, so a slow or unreachable bridge no longer stalls IPC (F-31). The
+    probe's network objects are created lazily on that thread.
+  * Rebuild against phi-adapter-sdk 0.4.0 (AdapterFactory vtable change).
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Wed, 19 Aug 2026 16:49:03 +0200
+
 phi-adapter-hue (0.0~git20260819.5fe7fe8-1) trixie; urgency=medium
 
   * Drive the sidecar from the SDK main loop (no poll interval, no idle wakeups).
