@@ -1,3 +1,12 @@
+phi-adapter-hue (0.0~git20260819.22694e4-1) trixie; urgency=medium
+
+  * Cancel in-flight HTTP requests when the adapter is stopping instead of
+    holding teardown for the full request timeout - up to 10s for the bridge
+    probe (F-33).
+  * Rebuild against phi-adapter-sdk 0.5.0.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Wed, 19 Aug 2026 18:10:56 +0200
+
 phi-adapter-hue (0.0~git20260819.d2dd2b2-1) trixie; urgency=medium
 
   * Run the bridge probe on a factory execution backend instead of the host poll
