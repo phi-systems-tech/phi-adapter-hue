@@ -1,4 +1,4 @@
-phi-adapter-hue (0.0~git20260819.22694e4-1) trixie; urgency=medium
+phi-adapter-hue (0.0~git202608191934.22694e4-1) trixie; urgency=medium
 
   * Cancel in-flight HTTP requests when the adapter is stopping instead of
     holding teardown for the full request timeout - up to 10s for the bridge
