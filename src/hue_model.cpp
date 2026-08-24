@@ -1,5 +1,7 @@
 #include "hue_model.h"
 
+#include <phi/adapter/v1/enum_names.h>
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -15,6 +17,21 @@ namespace phicore::hue::ipc {
 namespace {
 
 namespace v1 = phicore::adapter::v1;
+
+/**
+ * Offer one value of a contract enum as a choice, named by the contract.
+ *
+ * The names were written out here by hand, which is a second copy of the SDK's
+ * table with nothing keeping the two in step (U-28).
+ */
+template <typename Enum>
+void addEnumChoice(v1::Channel &channel, const char *enumTypeName, Enum value)
+{
+    v1::AdapterConfigOption option;
+    option.value = std::to_string(static_cast<int>(value));
+    option.label = v1::enum_names::enumNameFor(enumTypeName, static_cast<int>(value), false);
+    channel.choices.push_back(std::move(option));
+}
 
 QString deviceNameFromObjects(const QJsonObject &deviceObj)
 {
@@ -336,17 +353,11 @@ v1::Channel makeMotionSensitivityChannel(std::optional<std::int64_t> value)
     meta.insert(QStringLiteral("enumName"), QStringLiteral("SensitivityLevel"));
     channel.metaJson = QJsonDocument(meta).toJson(QJsonDocument::Compact).toStdString();
 
-    auto addChoice = [&channel](v1::SensitivityLevel level, const char *label) {
-        v1::AdapterConfigOption option;
-        option.value = std::to_string(static_cast<int>(level));
-        option.label = label;
-        channel.choices.push_back(std::move(option));
-    };
-    addChoice(v1::SensitivityLevel::Low, "Low");
-    addChoice(v1::SensitivityLevel::Medium, "Medium");
-    addChoice(v1::SensitivityLevel::High, "High");
-    addChoice(v1::SensitivityLevel::VeryHigh, "VeryHigh");
-    addChoice(v1::SensitivityLevel::Max, "Max");
+    addEnumChoice(channel, "SensitivityLevel", v1::SensitivityLevel::Low);
+    addEnumChoice(channel, "SensitivityLevel", v1::SensitivityLevel::Medium);
+    addEnumChoice(channel, "SensitivityLevel", v1::SensitivityLevel::High);
+    addEnumChoice(channel, "SensitivityLevel", v1::SensitivityLevel::VeryHigh);
+    addEnumChoice(channel, "SensitivityLevel", v1::SensitivityLevel::Max);
 
     if (value.has_value()) {
         channel.hasValue = true;
@@ -396,16 +407,10 @@ v1::Channel makeConnectivityChannel(std::optional<std::int64_t> value)
     channel.dataType = v1::ChannelDataType::Enum;
     channel.flags = v1::kChannelFlagDefaultRead;
 
-    auto addChoice = [&channel](v1::ConnectivityStatus status, const char *label) {
-        v1::AdapterConfigOption option;
-        option.value = std::to_string(static_cast<int>(status));
-        option.label = label;
-        channel.choices.push_back(std::move(option));
-    };
-    addChoice(v1::ConnectivityStatus::Unknown, "Unknown");
-    addChoice(v1::ConnectivityStatus::Connected, "Connected");
-    addChoice(v1::ConnectivityStatus::Limited, "Limited");
-    addChoice(v1::ConnectivityStatus::Disconnected, "Disconnected");
+    addEnumChoice(channel, "ConnectivityStatus", v1::ConnectivityStatus::Unknown);
+    addEnumChoice(channel, "ConnectivityStatus", v1::ConnectivityStatus::Connected);
+    addEnumChoice(channel, "ConnectivityStatus", v1::ConnectivityStatus::Limited);
+    addEnumChoice(channel, "ConnectivityStatus", v1::ConnectivityStatus::Disconnected);
 
     if (value.has_value()) {
         channel.hasValue = true;
