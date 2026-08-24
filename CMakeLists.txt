@@ -84,6 +84,24 @@ if(PHI_ADAPTER_HUE_BUILD_IPC)
             phi::adapter-sdk-qt
     )
 
+    # Conversion, tested without a bridge - the same shape of suite as
+    # phi-adapter-z2m's. `ctest` from the build directory runs it.
+    enable_testing()
+    add_executable(hue_model_tests
+        tests/hue_model_tests.cpp
+        src/hue_model.cpp
+    )
+    target_compile_features(hue_model_tests PRIVATE cxx_std_20)
+    target_include_directories(hue_model_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(hue_model_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Network
+            phi::adapter-sdk
+            phi::adapter-sdk-qt
+    )
+    add_test(NAME hue_model_tests COMMAND hue_model_tests)
+
     set_target_properties(phi_adapter_hue_ipc PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins/adapters"
         INSTALL_RPATH "$ORIGIN"
