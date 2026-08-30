@@ -1,3 +1,9 @@
+phi-adapter-hue (0.0~git202608301437.56ebe7d-1) trixie; urgency=medium
+
+  * Carries the bridge test suite added on 24 August.
+
+ -- Marius Schumacher <google@phisys.com>  Sun, 30 Aug 2026 14:37:12 +0200
+
 phi-adapter-hue (0.0~git202608241226.e80dd46-1) trixie; urgency=medium
 
   * Enum values are named by the contract rather than by a copy of its table
