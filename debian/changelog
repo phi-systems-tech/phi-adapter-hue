@@ -1,3 +1,13 @@
+phi-adapter-hue (0.0~git202609081903.a1839f9-1) trixie; urgency=medium
+
+  * The colour-temperature channel exists whenever a lamp has the
+    capability; in colour mode it carries no value. It used to come
+    and go with the mode and phi-core recreated it each time.
+  * Button windows run on arrival time (phi-adapter-sdk 0.13.1): a
+    quadruple click no longer arrives as two doubles.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Tue, 08 Sep 2026 19:04:05 +0200
+
 phi-adapter-hue (0.0~git202609081830.f363bdb-1) trixie; urgency=medium
 
   * The first poll after a start is retried until it is complete, since
