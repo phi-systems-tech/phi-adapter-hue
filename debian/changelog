@@ -1,3 +1,22 @@
+phi-adapter-hue (0.0~git202609081825.71c2a25-1) trixie; urgency=medium
+
+  * Rebuilt without Qt on the SDK loop client: the poll as non-blocking
+    requests, the event stream as a stream.
+  * The bridge certificate is verified against Signify root, installed as
+    /usr/share/phi/adapters/hue/huebridge_cacert.pem, and must name the
+    bridge id. It was not verified at all.
+  * A poll that could not fetch a resource type keeps its channels from
+    the last poll that could. Treating it as empty made phi-core remove
+    and recreate the dials button channels - the button that vanished
+    from the app.
+  * The bridge is a Gateway, not a Sensor.
+  * Commands answer with the bridge answer; devices and values are sent
+    only when they changed; a click is a single or a double, never both.
+  * Depends on phi-adapter-sdk (>= 0.13.0); no longer on Qt6 or
+    phi-adapter-sdk-qt.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Tue, 08 Sep 2026 18:25:33 +0200
+
 phi-adapter-hue (0.0~git202608301437.56ebe7d-1) trixie; urgency=medium
 
   * Carries the bridge test suite added on 24 August.
