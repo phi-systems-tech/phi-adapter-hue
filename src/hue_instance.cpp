@@ -575,6 +575,16 @@ private:
     void finishPoll()
     {
         m_pollRunning = false;
+        // The first poll has nothing to carry over from, so an incomplete one
+        // would announce devices without the channels it did not fetch - and
+        // phi-core would remove them. It is retried whole instead.
+        if (!m_pollFailures.empty() && m_snapshot.devices.empty()) {
+            std::string what;
+            for (const auto &[type, error] : m_pollFailures)
+                what += (what.empty() ? "" : ", ") + type + " (" + error + ")";
+            pollFailed("first poll incomplete, retrying: " + what);
+            return;
+        }
         // What could not be fetched is said, once per poll, and then left
         // exactly as it was: a resource type this poll knows nothing about
         // takes nothing away.
