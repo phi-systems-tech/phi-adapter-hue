@@ -1,22 +1,30 @@
 #pragma once
 
-#include <QJsonObject>
-#include <QString>
+// "Test connection", at factory scope: with an application key, whether the
+// bridge accepts it; without one, pairing - which needs the link button on
+// the bridge pressed first, and says so.
 
-#include "hue_http.h"
+#include <functional>
+#include <string>
+
+#include "phi/adapter/net/http_client.h"
+
+#include "hue_json.h"
+#include "hue_settings.h"
 
 namespace phicore::hue::ipc {
 
-struct ProbeResult {
+struct ProbeOutcome {
     bool ok = false;
-    QString error;
-    QString message;
-    QString appKey;
-    QJsonObject metaPatch;
+    std::string error;
+    std::string message;
+    std::string appKey;
+    /// Values the form takes over: the clientKey pairing produced.
+    Json formValues = Json::object();
 };
 
-ProbeResult runProbe(HttpClient &http,
-                     const ConnectionSettings &settings,
-                     int timeoutMs = 10000);
+/// One request on `http`; `done` runs on the loop when it answers.
+void runProbe(phicore::adapter::net::HttpClient &http, const ConnectionSettings &settings,
+              std::function<void(ProbeOutcome)> done);
 
 } // namespace phicore::hue::ipc

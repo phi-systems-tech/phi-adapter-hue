@@ -1,127 +1,85 @@
 #include "hue_schema.h"
 
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
+#include <string>
+
+#include "hue_json.h"
 
 namespace phicore::hue::ipc {
 
+namespace v1 = phicore::adapter::v1;
+
 namespace {
 
-QJsonObject responsive(int xs, int sm, int md, int lg, int xl, int xxl)
+Json field(const std::string &key, const std::string &type, const std::string &label,
+           const std::string &description, const Json &defaultValue = Json(),
+           const Json &flags = Json::array())
 {
-    QJsonObject out;
-    out.insert(QStringLiteral("xs"), xs);
-    out.insert(QStringLiteral("sm"), sm);
-    out.insert(QStringLiteral("md"), md);
-    out.insert(QStringLiteral("lg"), lg);
-    out.insert(QStringLiteral("xl"), xl);
-    out.insert(QStringLiteral("xxl"), xxl);
+    Json out = Json::object();
+    out["key"] = key;
+    out["type"] = type;
+    out["label"] = label;
+    out["description"] = description;
+    if (!defaultValue.is_null())
+        out["default"] = defaultValue;
+    if (flags.is_array() && !flags.empty())
+        out["flags"] = flags;
     return out;
 }
 
-QJsonObject field(const QString &key,
-                  const QString &type,
-                  const QString &label,
-                  const QString &description,
-                  const QJsonValue &defaultValue = QJsonValue(),
-                  const QJsonArray &flags = {})
+Json responsive(int xs, int sm, int md, int lg, int xl, int xxl)
 {
-    QJsonObject out;
-    out.insert(QStringLiteral("key"), key);
-    out.insert(QStringLiteral("type"), type);
-    out.insert(QStringLiteral("label"), label);
-    out.insert(QStringLiteral("description"), description);
-    if (!defaultValue.isUndefined() && !defaultValue.isNull())
-        out.insert(QStringLiteral("default"), defaultValue);
-    if (!flags.isEmpty())
-        out.insert(QStringLiteral("flags"), flags);
-    return out;
+    return Json{{"xs", xs}, {"sm", sm}, {"md", md}, {"lg", lg}, {"xl", xl}, {"xxl", xxl}};
 }
 
-QJsonArray schemaFields()
+Json schemaFields()
 {
-    QJsonArray fields;
-
-    QJsonArray hostFlags;
-    hostFlags.append(QStringLiteral("Required"));
-    fields.append(field(QStringLiteral("host"),
-                        QStringLiteral("Hostname"),
-                        QStringLiteral("Bridge host"),
-                        QStringLiteral("IP address or hostname of the Hue bridge."),
-                        QJsonValue(QStringLiteral("philips-hue.local")),
-                        hostFlags));
-
-    fields.append(field(QStringLiteral("port"),
-                        QStringLiteral("Port"),
-                        QStringLiteral("Port"),
-                        QStringLiteral("TCP port for the Hue API."),
-                        QJsonValue(443)));
-
-    fields.append(field(QStringLiteral("useTls"),
-                        QStringLiteral("Boolean"),
-                        QStringLiteral("Use HTTPS"),
-                        QStringLiteral("Use HTTPS when talking to the Hue API."),
-                        QJsonValue(true)));
-
-    QJsonArray appKeyFlags;
-    appKeyFlags.append(QStringLiteral("Secret"));
-    fields.append(field(QStringLiteral("appKey"),
-                        QStringLiteral("Password"),
-                        QStringLiteral("Application key"),
-                        QStringLiteral("Hue API application key."),
-                        QJsonValue(),
-                        appKeyFlags));
-
-    fields.append(field(QStringLiteral("pollIntervalMs"),
-                        QStringLiteral("Integer"),
-                        QStringLiteral("Poll interval"),
-                        QStringLiteral("Refresh interval while connected."),
-                        QJsonValue(5000)));
-
-    fields.append(field(QStringLiteral("retryIntervalMs"),
-                        QStringLiteral("Integer"),
-                        QStringLiteral("Retry interval"),
-                        QStringLiteral("Reconnect interval while bridge is unavailable."),
-                        QJsonValue(10000)));
-
+    Json fields = Json::array();
+    fields.push_back(field("host", "Hostname", "Bridge host",
+                           "IP address or hostname of the Hue bridge.", "philips-hue.local",
+                           Json::array({"Required"})));
+    fields.push_back(field("port", "Port", "Port", "TCP port for the Hue API.", 443));
+    fields.push_back(field("useTls", "Boolean", "Use HTTPS",
+                           "Use HTTPS when talking to the Hue API. The bridge's certificate is"
+                           " verified against Signify's root and has to name the bridge id.",
+                           true));
+    fields.push_back(field("appKey", "Password", "Application key", "Hue API application key.",
+                           Json(), Json::array({"Secret"})));
+    fields.push_back(field("pollIntervalMs", "Integer", "Poll interval",
+                           "Refresh interval while connected.", 5000));
+    fields.push_back(field("retryIntervalMs", "Integer", "Retry interval",
+                           "Reconnect interval while bridge is unavailable.", 10000));
     return fields;
 }
 
-QJsonObject section(const QString &title, const QString &description, const QJsonArray &fields)
+Json section(const std::string &title, const std::string &description, const Json &fields)
 {
-    QJsonObject layout;
-    layout.insert(QStringLiteral("gridUnits"), 24);
-    QJsonArray gutter;
-    gutter.append(12);
-    gutter.append(8);
-    layout.insert(QStringLiteral("gutter"), gutter);
-
-    QJsonObject defaults;
-    defaults.insert(QStringLiteral("span"), responsive(24, 24, 12, 12, 12, 12));
-    defaults.insert(QStringLiteral("labelPosition"), QStringLiteral("top"));
-    defaults.insert(QStringLiteral("labelSpan"), 8);
-    defaults.insert(QStringLiteral("controlSpan"), 16);
-    defaults.insert(QStringLiteral("actionPosition"), QStringLiteral("inline"));
-    defaults.insert(QStringLiteral("actionSpan"), 6);
-    layout.insert(QStringLiteral("defaults"), defaults);
-
-    QJsonObject out;
-    out.insert(QStringLiteral("title"), title);
-    out.insert(QStringLiteral("description"), description);
-    out.insert(QStringLiteral("layout"), layout);
-    out.insert(QStringLiteral("fields"), fields);
+    Json defaults = Json::object();
+    defaults["span"] = responsive(24, 24, 12, 12, 12, 12);
+    defaults["labelPosition"] = "top";
+    defaults["labelSpan"] = 8;
+    defaults["controlSpan"] = 16;
+    defaults["actionPosition"] = "inline";
+    defaults["actionSpan"] = 6;
+    Json layout = Json::object();
+    layout["gridUnits"] = 24;
+    layout["gutter"] = Json::array({12, 8});
+    layout["defaults"] = defaults;
+    Json out = Json::object();
+    out["title"] = title;
+    out["description"] = description;
+    out["layout"] = layout;
+    out["fields"] = fields;
     return out;
 }
 
 } // namespace
 
-phicore::adapter::v1::Utf8String displayName()
+v1::Utf8String displayName()
 {
     return "Philips Hue";
 }
 
-phicore::adapter::v1::Utf8String description()
+v1::Utf8String description()
 {
     return "Provides devices for Philips Hue bridge";
 }
@@ -177,21 +135,13 @@ phicore::adapter::v1::AdapterCapabilities capabilities()
     return caps;
 }
 
-phicore::adapter::v1::JsonText configSchemaJson()
+v1::JsonText configSchemaJson()
 {
-    const QJsonArray fields = schemaFields();
-
-    QJsonObject schema;
-    schema.insert(QStringLiteral("factory"),
-                  section(QStringLiteral("Philips Hue Bridge"),
-                          QStringLiteral("Configure connection to a Philips Hue bridge."),
-                          fields));
-    schema.insert(QStringLiteral("instance"),
-                  section(QStringLiteral("Philips Hue Bridge"),
-                          QStringLiteral("Configure connection to a Philips Hue bridge."),
-                          fields));
-
-    return QJsonDocument(schema).toJson(QJsonDocument::Compact).toStdString();
+    const Json fields = schemaFields();
+    Json schema = Json::object();
+    schema["factory"] = section("Philips Hue Bridge", "Configure connection to a Philips Hue bridge.", fields);
+    schema["instance"] = section("Philips Hue Bridge", "Configure connection to a Philips Hue bridge.", fields);
+    return dump(schema);
 }
 
 } // namespace phicore::hue::ipc

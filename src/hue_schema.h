@@ -1,5 +1,8 @@
 #pragma once
 
+// What the adapter says about itself to phi-core: name, icon, capabilities,
+// the configuration form.
+
 #include "phi/adapter/sdk/sidecar.h"
 
 namespace phicore::hue::ipc {

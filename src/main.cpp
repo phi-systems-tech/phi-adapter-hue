@@ -1,161 +1,67 @@
-#include <atomic>
-#include <chrono>
-#include <csignal>
+// Process entry point for the Hue sidecar: the adapter factory and the SDK's
+// own main loop. The bridge runtime lives in hue_instance; the conversion in
+// hue_model; the settings and the probe in hue_settings and hue_probe.
+
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <optional>
+#include <string>
 
-#include <QCoreApplication>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QNetworkAccessManager>
-#include <QTimer>
+#include "phi/adapter/net/http_client.h"
+#include "phi/adapter/sdk/loop_execution_backend.h"
+#include "phi/adapter/sdk/sidecar.h"
+#include "phi/runtime/loop.h"
 
-#include "hue_http.h"
+#include "hue_instance.h"
+#include "hue_json.h"
 #include "hue_probe.h"
 #include "hue_schema.h"
-#include "hue_sidecar.h"
-#include "phi/adapter/sdk/qt/instance_execution_backend_qt.h"
-#include "phi/adapter/sdk/qt/sidecar_driver_qt.h"
-#include "phi/adapter/sdk/sidecar.h"
+#include "hue_settings.h"
+
+namespace v1 = phicore::adapter::v1;
+namespace sdk = phicore::adapter::sdk;
+namespace net = phicore::adapter::net;
+
+using namespace phicore::hue::ipc;
 
 namespace {
 
-namespace phi = phicore::adapter::sdk;
-namespace v1 = phicore::adapter::v1;
-using phicore::hue::ipc::ConnectionSettings;
-using phicore::hue::ipc::HttpClient;
-
-std::atomic_bool g_running{true};
-
-void handleSignal(int)
-{
-    g_running.store(false);
-}
-
-std::int64_t nowMs()
-{
-    return std::chrono::duration_cast<std::chrono::milliseconds>(
-               std::chrono::system_clock::now().time_since_epoch())
-        .count();
-}
-
-QJsonObject parseJsonObject(const std::string &json)
-{
-    const QByteArray bytes = QByteArray::fromStdString(json).trimmed();
-    if (bytes.isEmpty())
-        return {};
-
-    const QJsonDocument doc = QJsonDocument::fromJson(bytes);
-    if (!doc.isObject())
-        return {};
-    return doc.object();
-}
-
-ConnectionSettings settingsFromAdapter(const v1::Adapter &adapter)
-{
-    ConnectionSettings settings;
-    settings.host = QString::fromStdString(adapter.host).trimmed();
-    settings.ip = QString::fromStdString(adapter.ip).trimmed();
-    settings.port = static_cast<int>(adapter.port);
-    settings.appKey = QString::fromStdString(adapter.token).trimmed();
-
-    const QJsonObject meta = parseJsonObject(adapter.metaJson);
-    if (meta.contains(QStringLiteral("host")))
-        settings.host = meta.value(QStringLiteral("host")).toString().trimmed();
-    if (meta.contains(QStringLiteral("ip")))
-        settings.ip = meta.value(QStringLiteral("ip")).toString().trimmed();
-    if (meta.contains(QStringLiteral("port")))
-        settings.port = meta.value(QStringLiteral("port")).toInt(settings.port);
-    if (meta.contains(QStringLiteral("appKey")))
-        settings.appKey = meta.value(QStringLiteral("appKey")).toString().trimmed();
-
-    if (meta.contains(QStringLiteral("useTls"))) {
-        settings.useTls = meta.value(QStringLiteral("useTls")).toBool(true);
-    } else {
-        const bool flagTls = v1::hasFlag(adapter.flags, v1::AdapterFlag::UseTls);
-        if (flagTls)
-            settings.useTls = true;
-        else if (settings.port > 0)
-            settings.useTls = (settings.port == 443);
-        else
-            settings.useTls = true;
-    }
-
-    if (settings.port <= 0)
-        settings.port = settings.useTls ? 443 : 80;
-
-    return settings;
-}
-
-void applyProbeParams(const QJsonObject &params, ConnectionSettings *settings)
-{
-    if (!settings)
-        return;
-    if (params.contains(QStringLiteral("host")))
-        settings->host = params.value(QStringLiteral("host")).toString().trimmed();
-    if (params.contains(QStringLiteral("ip")))
-        settings->ip = params.value(QStringLiteral("ip")).toString().trimmed();
-    if (params.contains(QStringLiteral("port")))
-        settings->port = params.value(QStringLiteral("port")).toInt(settings->port);
-    if (params.contains(QStringLiteral("useTls")))
-        settings->useTls = params.value(QStringLiteral("useTls")).toBool(settings->useTls);
-    if (params.contains(QStringLiteral("appKey")))
-        settings->appKey = params.value(QStringLiteral("appKey")).toString().trimmed();
-}
-
-class HueFactory final : public phi::AdapterFactory
+class HueFactory final : public sdk::AdapterFactory
 {
 protected:
-    void onBootstrap(const phi::BootstrapRequest &request) override
+    void onBootstrap(const sdk::BootstrapRequest &request) override
     {
-        m_factorySettings = settingsFromAdapter(request.adapter);
+        m_settings = settingsFromAdapter(request.adapter, parseObject(request.adapter.metaJson));
     }
 
-    void onFactoryConfigChanged(const phi::ConfigChangedRequest &request) override
+    void onFactoryConfigChanged(const sdk::ConfigChangedRequest &request) override
     {
-        m_factorySettings = settingsFromAdapter(request.adapter);
+        m_settings = settingsFromAdapter(request.adapter, parseObject(request.adapter.metaJson));
     }
 
-    void onFactoryActionInvoke(const phi::AdapterActionInvokeRequest &request) override
+    // The probe is an HTTPS round trip with a ten second budget; on the host
+    // poll thread it froze IPC for every instance of this sidecar. A loop
+    // backend, because the HTTP client needs somewhere to watch a descriptor.
+    std::unique_ptr<sdk::InstanceExecutionBackend> createFactoryExecutionBackend() override
     {
-        submitFactoryActionResult(handleFactoryAction(request), "factory.action.invoke");
+        return sdk::createLoopExecutionBackend("hue-factory");
     }
 
-    v1::Utf8String pluginType() const override
+    std::unique_ptr<sdk::InstanceExecutionBackend> createInstanceExecutionBackend(
+        const sdk::ExternalId &externalId) override
     {
-        return phicore::hue::ipc::kPluginType;
+        (void)externalId;
+        return sdk::createLoopExecutionBackend("hue-instance");
     }
 
-    v1::Utf8String displayName() const override
-    {
-        return phicore::hue::ipc::displayName();
-    }
-
-    v1::Utf8String description() const override
-    {
-        return phicore::hue::ipc::description();
-    }
-
-    v1::Utf8String iconSvg() const override
-    {
-        return phicore::hue::ipc::iconSvg();
-    }
-
-    v1::Utf8String apiVersion() const override
-    {
-        return "1.0.0";
-    }
-
-    int timeoutMs() const override
-    {
-        return 10000;
-    }
-
-    int maxInstances() const override
-    {
-        return 0;
-    }
+    v1::Utf8String pluginType() const override { return kPluginType; }
+    v1::Utf8String displayName() const override { return phicore::hue::ipc::displayName(); }
+    v1::Utf8String description() const override { return phicore::hue::ipc::description(); }
+    v1::Utf8String iconSvg() const override { return phicore::hue::ipc::iconSvg(); }
+    v1::Utf8String apiVersion() const override { return "1.0.0"; }
+    int timeoutMs() const override { return 10000; }
+    int maxInstances() const override { return 0; }
 
     v1::AdapterCapabilities capabilities() const override
     {
@@ -167,153 +73,96 @@ protected:
         return phicore::hue::ipc::configSchemaJson();
     }
 
-    std::unique_ptr<phi::InstanceExecutionBackend> createInstanceExecutionBackend(
-        const phi::ExternalId &externalId) override
-    {
-        (void)externalId;
-        return phi::qt::createInstanceExecutionBackend();
-    }
-
-    // The bridge probe is a blocking HTTP round trip with a 10s budget; on the
-    // host poll thread it froze IPC for every instance of this sidecar.
-    std::unique_ptr<phi::InstanceExecutionBackend> createFactoryExecutionBackend() override
-    {
-        return phi::qt::createFactoryExecutionBackend();
-    }
-
-    void onFactoryStopping() override
-    {
-        // Both objects live on the factory backend thread; destroy them while
-        // that thread is still alive.
-        m_http.reset();
-        m_probeNetwork.reset();
-    }
-
-    std::unique_ptr<phi::AdapterInstance> createInstance(const phi::ExternalId &externalId) override
+    std::unique_ptr<sdk::AdapterInstance> createInstance(const sdk::ExternalId &externalId) override
     {
         std::cerr << "create hue instance externalId=" << externalId << '\n';
-        return std::make_unique<phicore::hue::ipc::HueAdapterInstance>();
+        return makeInstance();
     }
+
+    void onFactoryActionInvoke(const sdk::AdapterActionInvokeRequest &request) override
+    {
+        if (request.actionId != "probe") {
+            answer(request.cmdId, v1::CmdStatus::NotSupported, "Unsupported factory action");
+            return;
+        }
+        ConnectionSettings settings = m_settings;
+        applyProbeParams(parseObject(request.paramsJson), settings);
+        if (settings.caFile.empty())
+            settings.caFile = bundledCaFile();
+
+        if (!m_http) {
+            phi::runtime::Loop *loop = phi::runtime::Loop::current();
+            if (loop == nullptr) {
+                answer(request.cmdId, v1::CmdStatus::Failure, "No loop on the factory thread");
+                return;
+            }
+            m_http.emplace(*loop);
+        }
+        std::cerr << "hue-ipc probe " << settings.baseUrl()
+                  << " keySet=" << (settings.appKey.empty() ? "false" : "true") << '\n';
+
+        const v1::CmdId cmdId = request.cmdId;
+        runProbe(*m_http, settings, [this, cmdId](ProbeOutcome outcome) {
+            v1::ActionResponse response;
+            response.id = cmdId;
+            response.tsMs = 0;
+            if (!outcome.ok) {
+                response.status = v1::CmdStatus::Failure;
+                response.error = outcome.error;
+                response.resultType = v1::ActionResultType::None;
+                send(response);
+                return;
+            }
+            // Factory-scope meta updates are not part of the contract; what
+            // pairing produced travels back as form values on the answer.
+            if (!outcome.formValues.empty())
+                response.formValuesJson = dump(outcome.formValues);
+            response.status = v1::CmdStatus::Success;
+            response.resultType = v1::ActionResultType::String;
+            response.resultValue = outcome.appKey.empty() ? outcome.message : outcome.appKey;
+            send(response);
+        });
+    }
+
+    /// The client belongs to the factory backend's loop; this is the last
+    /// callback that still runs on it.
+    void onFactoryStopping() override { m_http.reset(); }
 
 private:
-    v1::ActionResponse handleFactoryAction(const phi::AdapterActionInvokeRequest &request)
+    void answer(v1::CmdId cmdId, v1::CmdStatus status, const std::string &error)
     {
         v1::ActionResponse response;
-        response.id = request.cmdId;
-        response.tsMs = nowMs();
-
-        if (request.actionId != "probe") {
-            response.status = v1::CmdStatus::NotSupported;
-            response.error = "Unsupported factory action";
-            return response;
-        }
-
-        ConnectionSettings settings = m_factorySettings;
-        if (!request.paramsJson.empty()) {
-            const QJsonDocument doc = QJsonDocument::fromJson(QByteArray::fromStdString(request.paramsJson));
-            if (doc.isObject())
-                applyProbeParams(doc.object(), &settings);
-        }
-
-        const phicore::hue::ipc::ProbeResult probe = phicore::hue::ipc::runProbe(ensureHttp(), settings, 10000);
-        if (!probe.ok) {
-            response.status = v1::CmdStatus::Failure;
-            response.error = probe.error.toStdString();
-            response.resultType = v1::ActionResultType::None;
-            return response;
-        }
-
-        if (!probe.metaPatch.isEmpty()) {
-            // Factory-scope EventAdapterMetaUpdated is not part of the v1
-            // contract (core rejects it); probe results such as the created
-            // clientKey travel back as form value updates on the response.
-            response.formValuesJson =
-                QJsonDocument(probe.metaPatch).toJson(QJsonDocument::Compact).toStdString();
-        }
-
-        response.status = v1::CmdStatus::Success;
-        if (!probe.appKey.isEmpty()) {
-            response.resultType = v1::ActionResultType::String;
-            response.resultValue = probe.appKey.toStdString();
-        } else if (!probe.message.isEmpty()) {
-            response.resultType = v1::ActionResultType::String;
-            response.resultValue = probe.message.toStdString();
-        } else {
-            response.resultType = v1::ActionResultType::None;
-        }
-        return response;
+        response.id = cmdId;
+        response.status = status;
+        response.error = error;
+        response.resultType = v1::ActionResultType::None;
+        send(response);
     }
 
-    void submitFactoryActionResult(v1::ActionResponse response, const char *context)
+    void send(const v1::ActionResponse &response)
     {
         v1::Utf8String error;
         if (!sendResult(response, &error))
-            std::cerr << "failed to send " << context << " result: " << error << '\n';
+            std::cerr << "failed to send factory.action.invoke result: " << error << '\n';
     }
 
-    // Created on first use, i.e. on the factory backend thread: a
-    // QNetworkAccessManager built in the constructor would be bound to the main
-    // thread and never process replies from here.
-    HttpClient &ensureHttp()
-    {
-        if (!m_http) {
-            m_probeNetwork = std::make_unique<QNetworkAccessManager>();
-            m_http = std::make_unique<HttpClient>(m_probeNetwork.get());
-            // A 10s probe must not outlive the shutdown budget (F-33).
-            m_http->setCancelProbe([this]() { return stopRequested(); });
-        }
-        return *m_http;
-    }
-
-    std::unique_ptr<QNetworkAccessManager> m_probeNetwork;
-    std::unique_ptr<HttpClient> m_http;
-    // Written by onBootstrap/onFactoryConfigChanged and read by the probe - all
-    // on the factory backend thread, so no locking is needed.
-    ConnectionSettings m_factorySettings;
+    std::optional<net::HttpClient> m_http;
+    ConnectionSettings m_settings;
 };
 
 } // namespace
 
 int main(int argc, char **argv)
 {
-    QCoreApplication app(argc, argv);
-
-    std::signal(SIGINT, handleSignal);
-    std::signal(SIGTERM, handleSignal);
-
     const char *envSocketPath = std::getenv("PHI_ADAPTER_SOCKET_PATH");
     const v1::Utf8String socketPath = (argc > 1)
         ? argv[1]
         : (envSocketPath ? envSocketPath : v1::Utf8String("/tmp/phi-adapter-hue-ipc.sock"));
 
-    std::cerr << "starting phi_adapter_hue_ipc for pluginType=" << phicore::hue::ipc::kPluginType
+    std::cerr << "starting phi_adapter_hue_ipc for pluginType=" << kPluginType
               << " socket=" << socketPath << '\n';
 
     HueFactory factory;
-    phi::SidecarHost host(socketPath, factory);
-
-    // The driver watches the host's poll descriptor from the Qt event loop:
-    // no polling interval, no idle wakeups, and inbound frames as well as
-    // outbound work from worker threads are handled as they arrive.
-    phicore::adapter::sdk::qt::SidecarDriver driver(host);
-
-    v1::Utf8String error;
-    if (!driver.start(&error)) {
-        std::cerr << "failed to start sidecar host: " << error << '\n';
-        return 1;
-    }
-
-    // Signal handlers only flip a flag; a slow timer turns it into a clean
-    // Qt shutdown.
-    QTimer shutdownTimer;
-    QObject::connect(&shutdownTimer, &QTimer::timeout, [&]() {
-        if (!g_running.load(std::memory_order_relaxed))
-            app.quit();
-    });
-    shutdownTimer.start(250);
-
-    const int execResult = app.exec();
-    driver.stop();
-    std::cerr << "stopping phi_adapter_hue_ipc" << '\n';
-    return execResult;
+    sdk::SidecarHost host(socketPath, factory);
+    return sdk::runSidecarMain(host);
 }
