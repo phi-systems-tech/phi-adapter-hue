@@ -462,17 +462,25 @@ Snapshot buildSnapshot(const Resources &resources)
             entry.light.brightness = std::clamp(jsonDouble(dimming, "brightness", 0.0), 0.0, 100.0);
             upsertChannel(entry, makeBrightnessChannel(*entry.light.brightness), kTypeLight);
         }
+        // A lamp that can do colour temperature has the channel whether or
+        // not it is in that mode right now: in colour mode the bridge reports
+        // `mirek` as null, and a channel that came and went with the mode
+        // was removed and recreated by phi-core on every switch.
         const Json ct = jsonValue(lightObj, "color_temperature");
-        if (ct.is_object() && ct.contains("mirek")) {
-            const int mired = jsonInt(ct, "mirek", 0);
+        if (ct.is_object() && (ct.contains("mirek_schema") || ct.contains("mirek"))) {
+            const Json schema = jsonValue(ct, "mirek_schema");
+            const int mired = ct.contains("mirek") && ct.at("mirek").is_number()
+                ? ct.at("mirek").get<int>()
+                : 0;
+            v1::Channel channel = makeCtChannel(mired, jsonInt(schema, "mirek_minimum", 153),
+                                                jsonInt(schema, "mirek_maximum", 500));
             if (mired > 0) {
-                const Json schema = jsonValue(ct, "mirek_schema");
                 entry.light.mired = mired;
-                upsertChannel(entry,
-                              makeCtChannel(mired, jsonInt(schema, "mirek_minimum", 153),
-                                            jsonInt(schema, "mirek_maximum", 500)),
-                              kTypeLight);
+            } else {
+                channel.hasValue = false;
+                channel.lastValue = v1::ScalarValue{};
             }
+            upsertChannel(entry, std::move(channel), kTypeLight);
         }
         const Json color = jsonValue(lightObj, "color");
         const Json xy = jsonValue(color, "xy");

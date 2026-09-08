@@ -51,7 +51,9 @@ const char *kDevices = R"json([
    "services":[{"rid":"b1","rtype":"button"},{"rid":"b2","rtype":"button"},{"rid":"b3","rtype":"button"},
                {"rid":"b4","rtype":"button"},{"rid":"rr1","rtype":"relative_rotary"}]},
   {"id":"dev-plug","type":"device","metadata":{"name":"Media Plug"},"product_data":{
-     "model_id":"LOM006","product_archetype":"plug"},"services":[{"rid":"light-2","rtype":"light"}]}
+     "model_id":"LOM006","product_archetype":"plug"},"services":[{"rid":"light-2","rtype":"light"}]},
+  {"id":"dev-strip","type":"device","metadata":{"name":"Strip"},"product_data":{
+     "model_id":"LST002","product_archetype":"hue_lightstrip"},"services":[{"rid":"light-3","rtype":"light"}]}
 ])json";
 
 const char *kLights = R"json([
@@ -60,7 +62,11 @@ const char *kLights = R"json([
    "color_temperature":{"mirek":366,"mirek_schema":{"mirek_minimum":153,"mirek_maximum":500}},
    "color":{"xy":{"x":0.3127,"y":0.3290},"gamut":{"red":{"x":0.7,"y":0.3},"green":{"x":0.17,"y":0.7},"blue":{"x":0.15,"y":0.06}}},
    "effects":{"effect_values":["no_effect","candle","fire"]}},
-  {"id":"light-2","type":"light","owner":{"rid":"dev-plug","rtype":"device"},"on":{"on":false}}
+  {"id":"light-2","type":"light","owner":{"rid":"dev-plug","rtype":"device"},"on":{"on":false}},
+  {"id":"light-3","type":"light","owner":{"rid":"dev-strip","rtype":"device"},"on":{"on":true},
+   "dimming":{"brightness":80.0},
+   "color_temperature":{"mirek":null,"mirek_valid":false,"mirek_schema":{"mirek_minimum":153,"mirek_maximum":500}},
+   "color":{"xy":{"x":0.2,"y":0.6}}}
 ])json";
 
 const char *kButtons = R"json([
@@ -102,7 +108,7 @@ Resources fullResources()
 void testWhatABridgeTurnsInto()
 {
     const Snapshot snapshot = buildSnapshot(fullResources());
-    PHI_CHECK(snapshot.devices.size() == 4);
+    PHI_CHECK(snapshot.devices.size() == 5);
     PHI_CHECK(snapshot.discoveryResourceId == "disc-1");
 
     const DeviceEntry &lamp = snapshot.devices.at("dev-lamp");
@@ -132,6 +138,22 @@ void testWhatABridgeTurnsInto()
 
     const DeviceEntry &plug = snapshot.devices.at("dev-plug");
     PHI_CHECK(plug.device.deviceClass == v1::DeviceClass::Plug);
+
+    // A lamp in colour mode reports mirek as null. The channel is a
+    // capability and stays; only the value is absent. It used to come and
+    // go with the mode, and phi-core recreated it each time.
+    const DeviceEntry &strip = snapshot.devices.at("dev-strip");
+    PHI_CHECK_MSG(strip.channel("ct") != nullptr, "a colour-mode lamp lost its ct channel");
+    PHI_CHECK(strip.channel("ct") != nullptr && !strip.channel("ct")->hasValue);
+    PHI_CHECK(!strip.light.mired.has_value());
+    PHI_CHECK(strip.channel("color") != nullptr);
+    Resources warm = fullResources();
+    warm.byType["light"][2]["color_temperature"]["mirek"] = 300;
+    const Snapshot warmSnapshot = buildSnapshot(warm);
+    const DeviceEntry &warmStrip = warmSnapshot.devices.at("dev-strip");
+    PHI_CHECK(warmStrip.channel("ct")->hasValue);
+    PHI_CHECK_MSG(warmStrip.definitionKey() == strip.definitionKey(),
+                  "switching colour mode changed the definition");
 
     // Four buttons and a dial, numbered by control id.
     const DeviceEntry &dial = snapshot.devices.at("dev-dial");

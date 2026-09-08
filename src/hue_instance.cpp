@@ -963,7 +963,7 @@ private:
         }
 
         const std::string key = deviceId + "|" + channelId;
-        const sdk::ButtonPresses::Outcome outcome = m_presses.onEvent(key, code, eventTs);
+        const sdk::ButtonPresses::Outcome outcome = m_presses.onEvent(key, code, eventTs, nowMs());
         for (const sdk::ButtonPresses::Report &entry : outcome.report)
             report(deviceId, channelId, static_cast<std::int64_t>(entry.code), entry.tsMs, true);
         if (outcome.cancelWindow)
