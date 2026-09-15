@@ -1,3 +1,9 @@
+phi-adapter-hue (0.0~git202609151321.c9a836c-1) trixie; urgency=medium
+
+  * Schema through the SDK: host beside port, the intervals short.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Tue, 15 Sep 2026 13:21:04 +0200
+
 phi-adapter-hue (0.0~git202609081903.a1839f9-1) trixie; urgency=medium
 
   * The colour-temperature channel exists whenever a lamp has the
