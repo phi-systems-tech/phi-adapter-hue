@@ -1,3 +1,9 @@
+phi-adapter-hue (0.0~git202609151500.291c1f0-1) trixie; urgency=medium
+
+  * Typed probe action: its result goes into appKey
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Tue, 15 Sep 2026 15:00:53 +0200
+
 phi-adapter-hue (0.0~git202609151321.c9a836c-1) trixie; urgency=medium
 
   * Schema through the SDK: host beside port, the intervals short.
