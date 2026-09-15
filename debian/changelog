@@ -1,3 +1,9 @@
+phi-adapter-hue (0.0~git202609151747.e12df9f-1) trixie; urgency=medium
+
+  * Built against SDK 0.17.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Tue, 15 Sep 2026 17:47:02 +0200
+
 phi-adapter-hue (0.0~git202609151615.389ea97-1) trixie; urgency=medium
 
   * Built against SDK 0.16
