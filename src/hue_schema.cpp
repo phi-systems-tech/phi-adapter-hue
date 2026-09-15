@@ -102,17 +102,16 @@ phicore::adapter::v1::AdapterCapabilities capabilities()
     probe.id = "probe";
     probe.label = "Test connection";
     probe.description = "Reachability and credentials check";
-    probe.metaJson = R"({"placement":"card","kind":"command","requiresAck":true,"resultField":"appKey"})";
+    // Pairing answers with the application key, which goes into its field.
+    probe.resultField = "appKey";
     caps.factoryActions.push_back(probe);
 
     v1::AdapterActionDescriptor discovery;
     discovery.id = "startDeviceDiscovery";
     discovery.label = "Search for Hue devices";
     discovery.description = "Trigger the bridge to enter Zigbee discovery mode.";
-    discovery.metaJson = R"({"placement":"card","kind":"command","requiresAck":true})";
     caps.instanceActions.push_back(discovery);
 
-    caps.defaultsJson = R"({"host":"philips-hue.local","port":443,"useTls":true,"pollIntervalMs":5000,"retryIntervalMs":10000})";
     return caps;
 }
 
