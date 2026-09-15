@@ -68,9 +68,9 @@ protected:
         return phicore::hue::ipc::capabilities();
     }
 
-    v1::JsonText configSchemaJson() const override
+    std::optional<v1::AdapterConfigSchema> configSchema() const override
     {
-        return phicore::hue::ipc::configSchemaJson();
+        return phicore::hue::ipc::configSchema();
     }
 
     std::unique_ptr<sdk::AdapterInstance> createInstance(const sdk::ExternalId &externalId) override
@@ -115,8 +115,7 @@ protected:
             }
             // Factory-scope meta updates are not part of the contract; what
             // pairing produced travels back as form values on the answer.
-            if (!outcome.formValues.empty())
-                response.formValuesJson = dump(outcome.formValues);
+            response.formValues = std::move(outcome.formValues);
             response.status = v1::CmdStatus::Success;
             response.resultType = v1::ActionResultType::String;
             response.resultValue = outcome.appKey.empty() ? outcome.message : outcome.appKey;

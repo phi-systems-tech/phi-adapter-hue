@@ -14,6 +14,6 @@ phicore::adapter::v1::Utf8String description();
 phicore::adapter::v1::Utf8String iconSvg();
 
 phicore::adapter::v1::AdapterCapabilities capabilities();
-phicore::adapter::v1::JsonText configSchemaJson();
+phicore::adapter::v1::AdapterConfigSchema configSchema();
 
 } // namespace phicore::hue::ipc

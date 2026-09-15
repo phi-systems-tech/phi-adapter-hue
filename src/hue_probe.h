@@ -8,6 +8,7 @@
 #include <string>
 
 #include "phi/adapter/net/http_client.h"
+#include "phi/adapter/v1/types.h"
 
 #include "hue_json.h"
 #include "hue_settings.h"
@@ -20,7 +21,7 @@ struct ProbeOutcome {
     std::string message;
     std::string appKey;
     /// Values the form takes over: the clientKey pairing produced.
-    Json formValues = Json::object();
+    phicore::adapter::v1::AdapterFormValues formValues;
 };
 
 /// One request on `http`; `done` runs on the loop when it answers.

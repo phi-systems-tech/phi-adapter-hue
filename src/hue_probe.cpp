@@ -52,7 +52,7 @@ void runProbe(net::HttpClient &http, const ConnectionSettings &settings,
               std::function<void(ProbeOutcome)> done)
 {
     if (settings.address().empty()) {
-        done({false, "Host must not be empty", {}, {}, Json::object()});
+        done({false, "Host must not be empty", {}, {}, {}});
         return;
     }
     // A probe does not know the bridge id yet, so it cannot expect a name.
@@ -78,7 +78,7 @@ void runProbe(net::HttpClient &http, const ConnectionSettings &settings,
                 done(std::move(out));
             });
         if (!issued)
-            done({false, "Another probe is already running", {}, {}, Json::object()});
+            done({false, "Another probe is already running", {}, {}, {}});
         return;
     }
 
@@ -108,11 +108,12 @@ void runProbe(net::HttpClient &http, const ConnectionSettings &settings,
                                       out.appKey = appKey;
                                       out.message = "Pairing successful";
                                       if (!clientKey.empty())
-                                          out.formValues["clientKey"] = clientKey;
+                                          out.formValues.push_back(
+                                              {"clientKey", phicore::adapter::v1::ScalarValue(clientKey)});
                                       done(std::move(out));
                                   });
     if (!issued)
-        done({false, "Another probe is already running", {}, {}, Json::object()});
+        done({false, "Another probe is already running", {}, {}, {}});
 }
 
 } // namespace phicore::hue::ipc

@@ -1,8 +1,7 @@
 #include "hue_schema.h"
 
 #include <string>
-
-#include "hue_json.h"
+#include <utility>
 
 namespace phicore::hue::ipc {
 
@@ -10,65 +9,47 @@ namespace v1 = phicore::adapter::v1;
 
 namespace {
 
-Json field(const std::string &key, const std::string &type, const std::string &label,
-           const std::string &description, const Json &defaultValue = Json(),
-           const Json &flags = Json::array())
+v1::AdapterConfigField field(const char *key, v1::AdapterConfigFieldType type, const char *label,
+                             const char *description, v1::ScalarValue defaultValue = {})
 {
-    Json out = Json::object();
-    out["key"] = key;
-    out["type"] = type;
-    out["label"] = label;
-    out["description"] = description;
-    if (!defaultValue.is_null())
-        out["default"] = defaultValue;
-    if (flags.is_array() && !flags.empty())
-        out["flags"] = flags;
+    v1::AdapterConfigField out;
+    out.key = key;
+    out.type = type;
+    out.label = label;
+    out.description = description;
+    out.defaultValue = std::move(defaultValue);
     return out;
 }
 
-Json responsive(int xs, int sm, int md, int lg, int xl, int xxl)
+/// Two columns: the address beside its port, TLS beside the key, the two
+/// intervals short.
+v1::AdapterConfigSection section()
 {
-    return Json{{"xs", xs}, {"sm", sm}, {"md", md}, {"lg", lg}, {"xl", xl}, {"xxl", xxl}};
-}
+    using Type = v1::AdapterConfigFieldType;
+    v1::AdapterConfigSection out;
+    out.title = "Philips Hue Bridge";
+    out.description = "Configure connection to a Philips Hue bridge.";
+    out.layout.columns = 2;
 
-Json schemaFields()
-{
-    Json fields = Json::array();
-    fields.push_back(field("host", "Hostname", "Bridge host",
-                           "IP address or hostname of the Hue bridge.", "philips-hue.local",
-                           Json::array({"Required"})));
-    fields.push_back(field("port", "Port", "Port", "TCP port for the Hue API.", 443));
-    fields.push_back(field("useTls", "Boolean", "Use HTTPS",
-                           "Use HTTPS when talking to the Hue API. The bridge's certificate is"
-                           " verified against Signify's root and has to name the bridge id.",
-                           true));
-    fields.push_back(field("appKey", "Password", "Application key", "Hue API application key.",
-                           Json(), Json::array({"Secret"})));
-    fields.push_back(field("pollIntervalMs", "Integer", "Poll interval",
-                           "Refresh interval while connected.", 5000));
-    fields.push_back(field("retryIntervalMs", "Integer", "Retry interval",
-                           "Reconnect interval while bridge is unavailable.", 10000));
-    return fields;
-}
+    v1::AdapterConfigField host = field("host", Type::Hostname, "Bridge host", "IP address or hostname of the Hue bridge.",
+                                        v1::Utf8String("philips-hue.local"));
+    host.flags = v1::AdapterConfigFieldFlag::Required;
+    v1::AdapterConfigField port = field("port", Type::Port, "Port", "TCP port for the Hue API.", std::int64_t{443});
+    port.layout.controlWidth = v1::AdapterConfigSize::Narrow;
+    v1::AdapterConfigField useTls = field("useTls", Type::Boolean, "Use HTTPS",
+                                          "Use HTTPS when talking to the Hue API. The bridge's certificate is"
+                                          " verified against Signify's root and has to name the bridge id.",
+                                          true);
+    v1::AdapterConfigField appKey = field("appKey", Type::Password, "Application key", "Hue API application key.");
+    appKey.flags = v1::AdapterConfigFieldFlag::Secret;
+    v1::AdapterConfigField poll =
+        field("pollIntervalMs", Type::Integer, "Poll interval", "Refresh interval while connected.", std::int64_t{5000});
+    poll.layout.controlWidth = v1::AdapterConfigSize::Narrow;
+    v1::AdapterConfigField retry = field("retryIntervalMs", Type::Integer, "Retry interval",
+                                         "Reconnect interval while bridge is unavailable.", std::int64_t{10000});
+    retry.layout.controlWidth = v1::AdapterConfigSize::Narrow;
 
-Json section(const std::string &title, const std::string &description, const Json &fields)
-{
-    Json defaults = Json::object();
-    defaults["span"] = responsive(24, 24, 12, 12, 12, 12);
-    defaults["labelPosition"] = "top";
-    defaults["labelSpan"] = 8;
-    defaults["controlSpan"] = 16;
-    defaults["actionPosition"] = "inline";
-    defaults["actionSpan"] = 6;
-    Json layout = Json::object();
-    layout["gridUnits"] = 24;
-    layout["gutter"] = Json::array({12, 8});
-    layout["defaults"] = defaults;
-    Json out = Json::object();
-    out["title"] = title;
-    out["description"] = description;
-    out["layout"] = layout;
-    out["fields"] = fields;
+    out.fields = {host, port, useTls, appKey, poll, retry};
     return out;
 }
 
@@ -135,13 +116,12 @@ phicore::adapter::v1::AdapterCapabilities capabilities()
     return caps;
 }
 
-v1::JsonText configSchemaJson()
+v1::AdapterConfigSchema configSchema()
 {
-    const Json fields = schemaFields();
-    Json schema = Json::object();
-    schema["factory"] = section("Philips Hue Bridge", "Configure connection to a Philips Hue bridge.", fields);
-    schema["instance"] = section("Philips Hue Bridge", "Configure connection to a Philips Hue bridge.", fields);
-    return dump(schema);
+    v1::AdapterConfigSchema schema;
+    schema.factory = section();
+    schema.instance = section();
+    return schema;
 }
 
 } // namespace phicore::hue::ipc
