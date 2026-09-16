@@ -1,3 +1,9 @@
+phi-adapter-hue (0.0~git202609161201.0170883-1) trixie; urgency=medium
+
+  * hue: one line for a bridge that is away, not one every two seconds
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Wed, 16 Sep 2026 12:01:18 +0200
+
 phi-adapter-hue (0.0~git202609151747.e12df9f-1) trixie; urgency=medium
 
   * Built against SDK 0.17.
