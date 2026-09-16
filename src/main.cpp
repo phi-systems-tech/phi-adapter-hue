@@ -75,7 +75,8 @@ protected:
 
     std::unique_ptr<sdk::AdapterInstance> createInstance(const sdk::ExternalId &externalId) override
     {
-        std::cerr << "create hue instance externalId=" << externalId << '\n';
+        log(sdk::LogLevel::Debug, sdk::LogCategory::Lifecycle, "building the instance for %1",
+            {externalId});
         return makeInstance();
     }
 
@@ -98,8 +99,8 @@ protected:
             }
             m_http.emplace(*loop);
         }
-        std::cerr << "hue-ipc probe " << settings.baseUrl()
-                  << " keySet=" << (settings.appKey.empty() ? "false" : "true") << '\n';
+        log(sdk::LogLevel::Debug, sdk::LogCategory::Discovery, "probing %1 (key set: %2)",
+            {v1::Utf8String(settings.baseUrl()), !settings.appKey.empty()});
 
         const v1::CmdId cmdId = request.cmdId;
         runProbe(*m_http, settings, [this, cmdId](ProbeOutcome outcome) {
@@ -142,7 +143,8 @@ private:
     {
         v1::Utf8String error;
         if (!sendResult(response, &error))
-            std::cerr << "failed to send factory.action.invoke result: " << error << '\n';
+            log(sdk::LogLevel::Error, sdk::LogCategory::Internal,
+                "failed to send the factory.action.invoke result: %1", {error});
     }
 
     std::optional<net::HttpClient> m_http;
@@ -158,6 +160,7 @@ int main(int argc, char **argv)
         ? argv[1]
         : (envSocketPath ? envSocketPath : v1::Utf8String("/tmp/phi-adapter-hue-ipc.sock"));
 
+    // Before the dispatcher exists there is nowhere else to say this.
     std::cerr << "starting phi_adapter_hue_ipc for pluginType=" << kPluginType
               << " socket=" << socketPath << '\n';
 

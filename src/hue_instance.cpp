@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
-#include <iostream>
 #include <map>
 #include <optional>
 #include <set>
@@ -161,7 +160,8 @@ protected:
     {
         m_loop = phi::runtime::Loop::current();
         if (m_loop == nullptr) {
-            std::cerr << "hue instance started off a loop; no timers are possible\n";
+            log(sdk::LogLevel::Error, sdk::LogCategory::Lifecycle,
+                "started off a loop; no timers are possible");
             return false;
         }
         m_http.emplace(*m_loop);
@@ -209,15 +209,16 @@ protected:
         // including the meta this adapter writes. The same bridge with the
         // same key keeps its stream and its devices.
         if (m_settings.sameBridge(previous) && m_streamOpen) {
-            std::cerr << "hue-ipc config.changed adapterId=" << request.adapterId
-                      << " (same bridge, kept)\n";
+            log(sdk::LogLevel::Debug, sdk::LogCategory::Config,
+                "config.changed adapterId=%1 (same bridge, kept)",
+                {static_cast<std::int64_t>(request.adapterId)});
             armPollTimer();
             return;
         }
-        std::cerr << "hue-ipc config.changed adapterId=" << request.adapterId
-                  << " externalId=" << m_info.externalId << " bridge=" << m_settings.baseUrl()
-                  << " tls=" << (m_settings.useTls ? "verified" : "off")
-                  << " keySet=" << (m_settings.appKey.empty() ? "false" : "true") << '\n';
+        log(sdk::LogLevel::Debug, sdk::LogCategory::Config,
+            "config.changed adapterId=%1 externalId=%2 bridge=%3 tls=%4 keySet=%5",
+            {static_cast<std::int64_t>(request.adapterId), m_info.externalId,
+             v1::Utf8String(m_settings.baseUrl()), m_settings.useTls, !m_settings.appKey.empty()});
         stopPolling();
         closeStream();
         forgetBridge();
@@ -629,7 +630,7 @@ private:
                 "poll: some resources could not be fetched and were kept from the previous poll: "
                     + what,
                 {}, "poll");
-            std::cerr << "hue-ipc poll: kept " << what << '\n';
+
         }
         Snapshot next = buildSnapshot(m_pollResources);
         carryOver(m_snapshot, m_pollResources.missing(), next);
@@ -639,7 +640,7 @@ private:
         const sdk::Reachability::Verdict verdict = m_bridge.answered(nowMs());
         m_nextPollMs = verdict.waitMs;
         if (verdict.say)
-            std::cerr << "hue-ipc bridge answering again\n";
+            log(sdk::LogLevel::Info, sdk::LogCategory::Network, "the bridge is answering again");
         setLinkUp(true);
         armPollTimer();
     }
@@ -650,7 +651,9 @@ private:
         const sdk::Reachability::Verdict verdict = m_bridge.missed(error, nowMs());
         m_nextPollMs = verdict.waitMs;
         if (verdict.say) {
-            std::cerr << "hue-ipc poll failed: " << error << '\n';
+            log(verdict.changed ? sdk::LogLevel::Error : sdk::LogLevel::Warn,
+                sdk::LogCategory::Network, "the bridge did not answer: %1", {v1::Utf8String(error)},
+                "poll");
             v1::Utf8String sendErr;
             sendError(sdk::LogCategory::Network, "poll: " + error, {}, "poll", {}, nowMs(), &sendErr);
         }
@@ -756,9 +759,12 @@ private:
         }
 
         if (announced > 0 || m_snapshot.devices.size() != next.devices.size()) {
-            std::cerr << "hue-ipc devices: known=" << next.devices.size()
-                      << " announced=" << announced << " rooms=" << next.rooms.size()
-                      << " zones=" << next.groups.size() << " scenes=" << next.scenes.size() << '\n';
+            log(sdk::LogLevel::Info, sdk::LogCategory::Device,
+                "devices: %1 known, %2 announced, %3 rooms, %4 zones, %5 scenes",
+                {static_cast<std::int64_t>(next.devices.size()), static_cast<std::int64_t>(announced),
+                 static_cast<std::int64_t>(next.rooms.size()),
+                 static_cast<std::int64_t>(next.groups.size()),
+                 static_cast<std::int64_t>(next.scenes.size())});
         }
         m_snapshot = std::move(next);
         rebuildButtonMap();
@@ -770,8 +776,8 @@ private:
     {
         v1::Utf8String error;
         if (!sendDeviceUpdated(entry.device, entry.channels, &error))
-            std::cerr << "failed to send deviceUpdated(" << entry.device.externalId << "): " << error
-                      << '\n';
+            log(sdk::LogLevel::Error, sdk::LogCategory::Internal, "failed to send deviceUpdated(%1): %2",
+                {entry.device.externalId, error});
     }
 
     /// The bridge device has a connectivity channel core will never hear
@@ -840,7 +846,7 @@ private:
                 // seconds used to say so twice as often.
                 const sdk::Reachability::Verdict verdict = m_stream.answered(nowMs());
                 if (verdict.say || !m_streamEverOpen)
-                    std::cerr << "hue-ipc eventstream open\n";
+                    log(sdk::LogLevel::Info, sdk::LogCategory::Network, "the event stream is open");
                 m_streamEverOpen = true;
                 m_streamActive = true;
                 setLinkUp(true);
@@ -871,7 +877,8 @@ private:
         if (result.ok) {
             // A bridge ends the stream itself now and then; it is reopened at
             // once, and that is not a failure to report.
-            std::cerr << "hue-ipc eventstream finished\n";
+            log(sdk::LogLevel::Debug, sdk::LogCategory::Network,
+                "the bridge ended the event stream; reopening");
             scheduleStreamRetry(kStreamFastRetryMs);
         } else {
             streamFailed(failureText(result, "connection lost"));
@@ -885,7 +892,8 @@ private:
     {
         const sdk::Reachability::Verdict verdict = m_stream.missed(reason, nowMs());
         if (verdict.say) {
-            std::cerr << "hue-ipc eventstream error: " << reason << '\n';
+            log(sdk::LogLevel::Warn, sdk::LogCategory::Network, "the event stream failed: %1",
+                {v1::Utf8String(reason)}, "eventstream");
             v1::Utf8String error;
             sendError(sdk::LogCategory::Network, "eventstream: " + reason, {}, "eventstream", {},
                       nowMs(), &error);
@@ -1054,7 +1062,8 @@ private:
             m_reported.isNews(deviceId, channelId, value);
         v1::Utf8String error;
         if (!sendChannelStateUpdated(deviceId, channelId, value, ts, &error))
-            std::cerr << "failed to send channelStateUpdated(" << channelId << "): " << error << '\n';
+            log(sdk::LogLevel::Error, sdk::LogCategory::Internal,
+                "failed to send channelStateUpdated(%1): %2", {v1::Utf8String(channelId), error});
     }
 
     void reportColor(const std::string &deviceId, const v1::Color &color, std::int64_t ts)
@@ -1063,7 +1072,8 @@ private:
             return;
         v1::Utf8String error;
         if (!sendChannelColorStateUpdated(deviceId, "color", color.r, color.g, color.b, ts, &error))
-            std::cerr << "failed to send channelColorStateUpdated: " << error << '\n';
+            log(sdk::LogLevel::Error, sdk::LogCategory::Internal,
+                "failed to send channelColorStateUpdated: %1", {error});
     }
 
     void setLinkUp(bool up, bool force = false)
@@ -1071,10 +1081,11 @@ private:
         if (m_linkUp == up && !force)
             return;
         m_linkUp = up;
-        std::cerr << "hue-ipc link " << (up ? "up" : "down") << '\n';
+        log(sdk::LogLevel::Info, sdk::LogCategory::Lifecycle, up ? "link up" : "link down");
         v1::Utf8String error;
         if (!sendConnectionStateChanged(up, &error))
-            std::cerr << "failed to send connectionStateChanged: " << error << '\n';
+            log(sdk::LogLevel::Error, sdk::LogCategory::Internal,
+                "failed to send connectionStateChanged: %1", {error});
         m_linkSettle.reset();
         if (!up)
             return;
@@ -1115,14 +1126,16 @@ private:
     {
         v1::Utf8String error;
         if (!sendResult(response, &error))
-            std::cerr << "failed to send cmd result: " << error << '\n';
+            log(sdk::LogLevel::Error, sdk::LogCategory::Internal, "failed to send the command result: %1",
+                {error});
     }
 
     void sendAction(const v1::ActionResponse &response)
     {
         v1::Utf8String error;
         if (!sendResult(response, &error))
-            std::cerr << "failed to send action result: " << error << '\n';
+            log(sdk::LogLevel::Error, sdk::LogCategory::Internal, "failed to send the action result: %1",
+                {error});
     }
 
     void answerCommand(v1::CmdId cmdId, v1::CmdStatus status, const std::string &error)
