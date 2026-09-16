@@ -105,6 +105,15 @@ Adapter settings are configured through phi-core:
 - `retryIntervalMs`
 - `tlsCaFile` (optional; replaces the bundled Signify root)
 
+A bridge that does not answer is one HTTP call to one host, so a single failed
+poll is enough to report it gone. What grows is the wait: `retryIntervalMs`,
+twice, three times, six times it. The event stream is reopened five times
+quickly and then at the retry interval, and its failures are said once per
+reason rather than once per attempt - an unreachable bridge used to write a
+line every two seconds. Both use `sdk::Reachability` (phi-adapter-sdk README,
+"A Device That Stops Answering"). While the stream is up the poll is a safety
+net and runs once a minute, which is the same rule as before.
+
 ### Build
 
 ```bash

@@ -15,6 +15,8 @@
 
 #include "phi/adapter/net/http_client.h"
 #include "phi/adapter/sdk/button_presses.h"
+#include "phi/adapter/sdk/reachability.h"
+
 #include "phi/runtime/loop.h"
 #include "phi/runtime/str.h"
 
@@ -38,7 +40,7 @@ namespace {
 /// While the event stream is up, the poll is a safety net, not the source.
 constexpr auto kPollWhileStreaming = 60s;
 /// The stream is reopened quickly a few times, then at the retry interval.
-constexpr auto kStreamFastRetry = 2s;
+constexpr std::int64_t kStreamFastRetryMs = 2000;
 constexpr int kStreamFastRetries = 5;
 /// An event that changes what exists (a device added, a room renamed) is
 /// answered with a poll, but not one per event: a bridge announces a join
@@ -198,6 +200,9 @@ protected:
         m_settings = settingsFromAdapter(m_info, m_meta);
         m_pollIntervalMs = std::clamp(jsonInt(m_meta, "pollIntervalMs", 5000), 1000, 600000);
         m_retryIntervalMs = std::clamp(jsonInt(m_meta, "retryIntervalMs", 10000), 1000, 600000);
+        m_bridge = sdk::Reachability(bridgePolicy());
+        m_stream = sdk::Reachability(streamPolicy());
+        m_nextPollMs = m_pollIntervalMs;
         m_lifecycle = Lifecycle::Running;
 
         // Core sends config.changed for every change to the adapter's record,
@@ -216,7 +221,6 @@ protected:
         stopPolling();
         closeStream();
         forgetBridge();
-        m_streamRetries = 0;
         openStream();
         armPollTimer();
         beginPoll();
@@ -496,6 +500,35 @@ private:
         return result.error.empty() ? fallback : result.error;
     }
 
+    /// One failed poll is a bridge that is not there: it is one HTTP call to
+    /// one host, and there is nothing else it could mean. What grows is the
+    /// wait, so a bridge that is unplugged is asked once a minute in the end
+    /// rather than every ten seconds forever.
+    [[nodiscard]] sdk::Reachability::Policy bridgePolicy() const
+    {
+        const auto retry = static_cast<std::int64_t>(m_retryIntervalMs);
+        sdk::Reachability::Policy policy;
+        policy.intervalMs = m_pollIntervalMs;
+        policy.strikes = 1;
+        policy.retryDelaysMs = {retry, 2 * retry, 3 * retry, 6 * retry};
+        return policy;
+    }
+
+    /// The stream is reopened quickly a few times - a bridge drops it for
+    /// reasons of its own - and then at the retry interval. The gate is here
+    /// for the line as much as the wait: this used to write one every two
+    /// seconds for as long as a bridge was away.
+    [[nodiscard]] sdk::Reachability::Policy streamPolicy() const
+    {
+        const auto retry = static_cast<std::int64_t>(m_retryIntervalMs);
+        sdk::Reachability::Policy policy;
+        policy.intervalMs = retry;
+        policy.strikes = 1;
+        policy.retryDelaysMs.assign(kStreamFastRetries, kStreamFastRetryMs);
+        policy.retryDelaysMs.push_back(retry);
+        return policy;
+    }
+
     // --- the poll ---------------------------------------------------------
 
     void armPollTimer()
@@ -505,7 +538,7 @@ private:
         const std::chrono::milliseconds interval = m_streamActive
             ? std::max(std::chrono::milliseconds(m_pollIntervalMs),
                        std::chrono::duration_cast<std::chrono::milliseconds>(kPollWhileStreaming))
-            : std::chrono::milliseconds(m_linkUp ? m_pollIntervalMs : m_retryIntervalMs);
+            : std::chrono::milliseconds(m_nextPollMs > 0 ? m_nextPollMs : m_pollIntervalMs);
         if (m_pollTimer && interval == m_pollTimerInterval)
             return;
         m_pollTimerInterval = interval;
@@ -603,7 +636,10 @@ private:
         publish(next);
         m_pollFailures.clear();
         m_pollResources = Resources{};
-        m_pollFailedBefore.clear();
+        const sdk::Reachability::Verdict verdict = m_bridge.answered(nowMs());
+        m_nextPollMs = verdict.waitMs;
+        if (verdict.say)
+            std::cerr << "hue-ipc bridge answering again\n";
         setLinkUp(true);
         armPollTimer();
     }
@@ -611,8 +647,9 @@ private:
     void pollFailed(const std::string &error)
     {
         m_pollRunning = false;
-        if (error != m_pollFailedBefore) {
-            m_pollFailedBefore = error;
+        const sdk::Reachability::Verdict verdict = m_bridge.missed(error, nowMs());
+        m_nextPollMs = verdict.waitMs;
+        if (verdict.say) {
             std::cerr << "hue-ipc poll failed: " << error << '\n';
             v1::Utf8String sendErr;
             sendError(sdk::LogCategory::Network, "poll: " + error, {}, "poll", {}, nowMs(), &sendErr);
@@ -786,7 +823,7 @@ private:
             return;
         m_streamRetry.reset();
         if (m_settings.address().empty() || m_settings.appKey.empty()) {
-            scheduleStreamRetry();
+            streamFailed("no address or application key yet");
             return;
         }
         net::HttpClient::Call call = callFor(m_settings, "GET", "/eventstream/clip/v2", {}, true);
@@ -798,9 +835,14 @@ private:
         m_streamOpen = m_streamHttp->stream(call, {
             .head = [this](int status, const std::vector<net::Header> &) {
                 (void)status;
-                std::cerr << "hue-ipc eventstream open\n";
+                // Once when it first opens, and again only when it had been
+                // reported gone: a bridge that drops the stream every two
+                // seconds used to say so twice as often.
+                const sdk::Reachability::Verdict verdict = m_stream.answered(nowMs());
+                if (verdict.say || !m_streamEverOpen)
+                    std::cerr << "hue-ipc eventstream open\n";
+                m_streamEverOpen = true;
                 m_streamActive = true;
-                m_streamRetries = 0;
                 setLinkUp(true);
                 armPollTimer();
             },
@@ -808,7 +850,7 @@ private:
             .done = [this](net::HttpClient::Result result) { onStreamEnded(result); },
         });
         if (!m_streamOpen)
-            scheduleStreamRetry();
+            streamFailed("stream could not be opened");
     }
 
     void closeStream()
@@ -827,33 +869,35 @@ private:
         const bool wasActive = m_streamActive;
         m_streamActive = false;
         if (result.ok) {
+            // A bridge ends the stream itself now and then; it is reopened at
+            // once, and that is not a failure to report.
             std::cerr << "hue-ipc eventstream finished\n";
+            scheduleStreamRetry(kStreamFastRetryMs);
         } else {
-            const std::string reason = failureText(result, "connection lost");
-            std::cerr << "hue-ipc eventstream error: " << reason << '\n';
-            if (reason != m_streamFailedBefore) {
-                m_streamFailedBefore = reason;
-                v1::Utf8String error;
-                sendError(sdk::LogCategory::Network, "eventstream: " + reason, {}, "eventstream", {},
-                          nowMs(), &error);
-            }
+            streamFailed(failureText(result, "connection lost"));
             if (wasActive || result.unauthorized)
                 setLinkUp(false);
         }
-        scheduleStreamRetry();
         armPollTimer();
     }
 
-    void scheduleStreamRetry()
+    void streamFailed(const std::string &reason)
+    {
+        const sdk::Reachability::Verdict verdict = m_stream.missed(reason, nowMs());
+        if (verdict.say) {
+            std::cerr << "hue-ipc eventstream error: " << reason << '\n';
+            v1::Utf8String error;
+            sendError(sdk::LogCategory::Network, "eventstream: " + reason, {}, "eventstream", {},
+                      nowMs(), &error);
+        }
+        scheduleStreamRetry(verdict.waitMs);
+    }
+
+    void scheduleStreamRetry(std::int64_t delayMs)
     {
         if (!m_loop || m_lifecycle != Lifecycle::Running)
             return;
-        std::chrono::milliseconds delay(m_retryIntervalMs);
-        if (m_streamRetries < kStreamFastRetries) {
-            ++m_streamRetries;
-            delay = kStreamFastRetry;
-        }
-        m_streamRetry = m_loop->timerAfter(delay, [this]() {
+        m_streamRetry = m_loop->timerAfter(std::chrono::milliseconds(delayMs), [this]() {
             m_streamRetry.reset();
             openStream();
         });
@@ -1051,8 +1095,8 @@ private:
         m_dialResets.clear();
         m_buttonChannelByResource.clear();
         m_pollButtons = Json::array();
-        m_pollFailedBefore.clear();
-        m_streamFailedBefore.clear();
+        m_bridge.forget();
+        m_stream.forget();
     }
 
     // --- answering --------------------------------------------------------
@@ -1130,14 +1174,16 @@ private:
     std::size_t m_pollStep = 0;
     Resources m_pollResources;
     std::map<std::string, std::string> m_pollFailures;
-    std::string m_pollFailedBefore;
+    sdk::Reachability m_bridge;
+    sdk::Reachability m_stream;
+    /// What the gate said to wait before the next poll.
+    std::int64_t m_nextPollMs = 0;
+    bool m_streamEverOpen = false;
     Json m_pollButtons = Json::array();
 
     bool m_streamOpen = false;
     bool m_streamActive = false;
-    int m_streamRetries = 0;
     phi::runtime::Timer m_streamRetry;
-    std::string m_streamFailedBefore;
     EventStreamParser m_events;
 
     bool m_linkUp = false;
