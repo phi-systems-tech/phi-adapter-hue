@@ -210,15 +210,12 @@ protected:
         // same key keeps its stream and its devices.
         if (m_settings.sameBridge(previous) && m_streamOpen) {
             log(sdk::LogLevel::Debug, sdk::LogCategory::Config,
-                "config.changed adapterId=%1 (same bridge, kept)",
-                {static_cast<std::int64_t>(request.adapterId)});
+                "the same bridge and key: the stream and the devices are kept");
             armPollTimer();
             return;
         }
-        log(sdk::LogLevel::Debug, sdk::LogCategory::Config,
-            "config.changed adapterId=%1 externalId=%2 bridge=%3 tls=%4 keySet=%5",
-            {static_cast<std::int64_t>(request.adapterId), m_info.externalId,
-             v1::Utf8String(m_settings.baseUrl()), m_settings.useTls, !m_settings.appKey.empty()});
+        log(sdk::LogLevel::Debug, sdk::LogCategory::Config, "bridge %1 (tls %2, key set %3)",
+            {v1::Utf8String(m_settings.baseUrl()), m_settings.useTls, !m_settings.appKey.empty()});
         stopPolling();
         closeStream();
         forgetBridge();
@@ -1081,7 +1078,8 @@ private:
         if (m_linkUp == up && !force)
             return;
         m_linkUp = up;
-        log(sdk::LogLevel::Info, sdk::LogCategory::Lifecycle, up ? "link up" : "link down");
+        log(sdk::LogLevel::Info, sdk::LogCategory::Lifecycle,
+            up ? "the link to the bridge is up" : "the link to the bridge is down");
         v1::Utf8String error;
         if (!sendConnectionStateChanged(up, &error))
             log(sdk::LogLevel::Error, sdk::LogCategory::Internal,

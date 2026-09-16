@@ -3,7 +3,6 @@
 // hue_model; the settings and the probe in hue_settings and hue_probe.
 
 #include <cstdlib>
-#include <iostream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -75,8 +74,6 @@ protected:
 
     std::unique_ptr<sdk::AdapterInstance> createInstance(const sdk::ExternalId &externalId) override
     {
-        log(sdk::LogLevel::Debug, sdk::LogCategory::Lifecycle, "building the instance for %1",
-            {externalId});
         return makeInstance();
     }
 
@@ -160,9 +157,6 @@ int main(int argc, char **argv)
         ? argv[1]
         : (envSocketPath ? envSocketPath : v1::Utf8String("/tmp/phi-adapter-hue-ipc.sock"));
 
-    // Before the dispatcher exists there is nowhere else to say this.
-    std::cerr << "starting phi_adapter_hue_ipc for pluginType=" << kPluginType
-              << " socket=" << socketPath << '\n';
 
     HueFactory factory;
     sdk::SidecarHost host(socketPath, factory);
