@@ -74,7 +74,7 @@ ConnectionSettings settingsFromAdapter(const v1::Adapter &adapter, const Json &m
             meta.at("useTls").is_boolean() ? v1::ScalarValue(meta.at("useTls").get<bool>())
                                            : v1::ScalarValue(jsonScalarText(meta.at("useTls"))),
             true);
-    } else if (v1::hasFlag(adapter.flags, v1::AdapterFlag::UseTls)) {
+    } else if (v1::hasFlag(adapter.options, v1::AdapterOption::UseTls)) {
         settings.useTls = true;
     } else if (settings.port > 0) {
         settings.useTls = settings.port == 443;

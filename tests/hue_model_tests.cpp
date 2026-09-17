@@ -319,7 +319,7 @@ void testWhereTheCallsGo()
     adapter.ip = "192.168.1.25";
     adapter.port = 443;
     adapter.token = "app-key-1";
-    adapter.flags = v1::AdapterFlag::UseTls;
+    adapter.options = v1::AdapterOption::UseTls;
 
     const ConnectionSettings settings = settingsFromAdapter(adapter, parseObject("{}"));
     PHI_CHECK(settings.address() == "192.168.1.25");
