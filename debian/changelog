@@ -1,3 +1,11 @@
+phi-adapter-hue (0.0~git202609172148.4ff4fa1-1) trixie; urgency=medium
+
+  * AdapterFlag is split into AdapterCapability (what a plugin declares
+    about itself) and AdapterOption (what a household answers for one
+    instance: UseTls, EnableLogs); bit values unchanged
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Thu, 17 Sep 2026 21:48:38 +0200
+
 phi-adapter-hue (0.0~git202609172026.e5afa1d-1) trixie; urgency=medium
 
   * Carries a rename for rooms, zones and scenes, and declares all four
