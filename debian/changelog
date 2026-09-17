@@ -1,3 +1,14 @@
+phi-adapter-hue (0.0~git202609171417.35d42dc-1) trixie; urgency=medium
+
+  * A Hue zone lists its members as the light services it groups
+    (`rtype:"light"`), not as devices, so collectMembers - written for
+    rooms and applied to both - left every zone empty. A child that is
+    not a device is now resolved through the owning device's own
+    `services` array, and two services of one device in one zone are
+    one member.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Thu, 17 Sep 2026 14:17:03 +0200
+
 phi-adapter-hue (0.0~git202609161503.fcfe914-1) trixie; urgency=medium
 
   * Say nothing the host already said: no stderr banner or
