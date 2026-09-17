@@ -1,3 +1,10 @@
+phi-adapter-hue (0.0~git202609172026.e5afa1d-1) trixie; urgency=medium
+
+  * Carries a rename for rooms, zones and scenes, and declares all four
+    rename capabilities
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Thu, 17 Sep 2026 20:26:00 +0200
+
 phi-adapter-hue (0.0~git202609171417.35d42dc-1) trixie; urgency=medium
 
   * A Hue zone lists its members as the light services it groups
