@@ -4,6 +4,8 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <map>
+#include <set>
 
 #include "phi/adapter/v1/enum_names.h"
 #include "phi/runtime/str.h"
@@ -639,21 +641,51 @@ Snapshot buildSnapshot(const Resources &resources)
         upsertChannel(entry, std::move(channel), kTypeConnectivity);
     }
 
+    // A room lists its members as devices; a zone lists them as the services
+    // they group - seven `rtype:"light"` children and not one device. Reading
+    // only the device children left every zone empty, which is what a group
+    // with no members looked like from the outside. The bridge already says
+    // who owns a service in each device's own `services` array, so the map is
+    // free.
+    std::map<std::string, std::string> deviceOfService;
+    for (const Json &deviceObj : resources.array(kTypeDevice)) {
+        const std::string deviceId = jsonString(deviceObj, "id");
+        const Json services = jsonValue(deviceObj, "services");
+        if (deviceId.empty() || !services.is_array())
+            continue;
+        for (const Json &service : services) {
+            const std::string rid = jsonString(service, "rid");
+            if (!rid.empty())
+                deviceOfService[rid] = deviceId;
+        }
+    }
+
     std::map<std::string, std::vector<std::string>> memberships;
-    const auto collectMembers = [&memberships](const Json &array) {
+    const auto collectMembers = [&memberships, &deviceOfService](const Json &array) {
         for (const Json &obj : array) {
             const std::string id = jsonString(obj, "id");
             if (id.empty())
                 continue;
             std::vector<std::string> members;
+            std::set<std::string> seen;
             const Json children = jsonValue(obj, "children");
             if (children.is_array()) {
                 for (const Json &child : children) {
-                    if (jsonString(child, "rtype") != "device")
-                        continue;
                     const std::string rid = jsonString(child, "rid");
-                    if (!rid.empty())
-                        members.push_back(rid);
+                    if (rid.empty())
+                        continue;
+                    std::string deviceId;
+                    if (jsonString(child, "rtype") == kTypeDevice) {
+                        deviceId = rid;
+                    } else if (const auto owner = deviceOfService.find(rid);
+                               owner != deviceOfService.end()) {
+                        // Two services of one device in the same zone are one
+                        // member, not two.
+                        deviceId = owner->second;
+                    }
+                    if (deviceId.empty() || !seen.insert(deviceId).second)
+                        continue;
+                    members.push_back(std::move(deviceId));
                 }
             }
             memberships[id] = std::move(members);

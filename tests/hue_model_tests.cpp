@@ -13,6 +13,7 @@
 
 #include <cmath>
 #include <string>
+#include <vector>
 
 using namespace phicore::hue::ipc;
 namespace v1 = phicore::adapter::v1;
@@ -99,7 +100,10 @@ Resources fullResources()
     resources.byType["relative_rotary"] = arrayOf(R"json([{"id":"rr1","type":"relative_rotary","owner":{"rid":"dev-dial","rtype":"device"}}])json");
     resources.byType["zigbee_connectivity"] = arrayOf(kConnectivity);
     resources.byType["room"] = arrayOf(R"json([{"id":"room-1","type":"room","metadata":{"name":"Kitchen"},"children":[{"rid":"dev-lamp","rtype":"device"}]}])json");
-    resources.byType["zone"] = Json::array();
+    // A zone the way a bridge really sends one: its children are the light
+    // services it groups, never the devices behind them.
+    resources.byType["zone"] = arrayOf(R"json([{"id":"zone-1","type":"zone","metadata":{"name":"TV"},
+      "children":[{"rid":"light-1","rtype":"light"},{"rid":"light-3","rtype":"light"}]}])json");
     resources.byType["scene"] = arrayOf(R"json([{"id":"scene-1","type":"scene","metadata":{"name":"Relax"},"group":{"rid":"room-1","rtype":"room"}}])json");
     resources.byType["zigbee_device_discovery"] = arrayOf(R"json([{"id":"disc-1"}])json");
     return resources;
@@ -169,6 +173,14 @@ void testWhatABridgeTurnsInto()
     PHI_CHECK(dial.channelSource.at("dial") == "relative_rotary");
 
     PHI_CHECK(snapshot.rooms.size() == 1 && snapshot.rooms[0].deviceExternalIds.size() == 1);
+
+    // The zone's members are the devices owning those services. Reading only
+    // the device children, as this did, made every zone on a real bridge an
+    // empty group - and nothing here noticed, because the fixture had no zone.
+    PHI_CHECK(snapshot.groups.size() == 1);
+    PHI_CHECK(snapshot.groups[0].name == "TV");
+    PHI_CHECK(snapshot.groups[0].deviceExternalIds
+              == (std::vector<std::string>{"dev-lamp", "dev-strip"}));
     PHI_CHECK(snapshot.scenes.size() == 1 && snapshot.scenes[0].scopeExternalId == "room-1");
 
     // The same answers give the same key; a renamed device does not.
