@@ -93,9 +93,14 @@ phicore::adapter::v1::AdapterCapabilities capabilities()
     caps.optional = v1::AdapterRequirement::SupportsTls
         | v1::AdapterRequirement::AppKey
         | v1::AdapterRequirement::Port;
+    // Hue names a device, a room, a zone and a scene through one and the same
+    // `metadata.name` on the resource, so all four can be carried.
     caps.flags = v1::AdapterFlag::SupportsProbe
         | v1::AdapterFlag::SupportsDiscovery
-        | v1::AdapterFlag::SupportsRename
+        | v1::AdapterFlag::SupportsDeviceRename
+        | v1::AdapterFlag::SupportsRoomRename
+        | v1::AdapterFlag::SupportsGroupRename
+        | v1::AdapterFlag::SupportsSceneRename
         | v1::AdapterFlag::RequiresPolling;
 
     v1::AdapterActionDescriptor probe;

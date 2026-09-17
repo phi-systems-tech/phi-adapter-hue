@@ -332,6 +332,55 @@ protected:
                 });
     }
 
+    void onEntityNameUpdate(const sdk::EntityNameUpdateRequest &request) override
+    {
+        if (m_lifecycle != Lifecycle::Running || !m_http) {
+            answerCommand(request.cmdId, v1::CmdStatus::TemporarilyOffline, "Instance is not running");
+            return;
+        }
+        const std::string name = str::trimmed(request.name);
+        if (request.entityExternalId.empty() || name.empty()) {
+            answerCommand(request.cmdId, v1::CmdStatus::InvalidArgument, "Entity and name are required");
+            return;
+        }
+
+        // Hue names a room, a zone and a scene the same way it names a device:
+        // `metadata.name` on the resource. Only the resource type differs, and
+        // our three kinds map onto three of Hue's - a group of ours is a Hue
+        // zone, which is Hue's word for a grouping that is not a place.
+        const char *resource = nullptr;
+        switch (request.kind) {
+        case v1::NamedEntityKind::Room:  resource = "room";  break;
+        case v1::NamedEntityKind::Group: resource = "zone";  break;
+        case v1::NamedEntityKind::Scene: resource = "scene"; break;
+        }
+        if (!resource) {
+            answerCommand(request.cmdId, v1::CmdStatus::InvalidArgument, "Unknown entity kind");
+            return;
+        }
+
+        const std::string body = dump(Json{{"metadata", Json{{"name", name}}}});
+        const v1::CmdId cmdId = request.cmdId;
+        enqueue(callFor(m_settings, "PUT",
+                        std::string("/clip/v2/resource/") + resource + "/" + request.entityExternalId,
+                        body, true),
+                [this, cmdId](net::HttpClient::Result result) {
+                    if (!result.ok) {
+                        answerCommand(cmdId, failureStatus(result),
+                                      failureText(result, "Rename request failed"));
+                        return;
+                    }
+                    // Unlike a device, the local copy is not patched here: the
+                    // bridge answers the change on the eventstream and the
+                    // debounced poll rebuilds rooms, zones and scenes from what
+                    // the bridge says. Core has not stored the name either - it
+                    // waits for the Success below - so the one that arrives is
+                    // the bridge's own, which is the whole point.
+                    answerCommand(cmdId, v1::CmdStatus::Success, {});
+                    schedulePollSoon();
+                });
+    }
+
     void onDeviceEffectInvoke(const sdk::DeviceEffectInvokeRequest &request) override
     {
         if (m_lifecycle != Lifecycle::Running || !m_http) {
