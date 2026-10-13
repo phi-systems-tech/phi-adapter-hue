@@ -1,3 +1,10 @@
+phi-adapter-hue (0.0~git202610131659.9826b06-1) trixie; urgency=medium
+
+  * Rebuild against SDK 0.22.0, which moves the offsets behind
+    mediaPlayerFeatures in Device while the soname stays .so.0.
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Tue, 13 Oct 2026 16:59:42 +0200
+
 phi-adapter-hue (0.0~git202609172148.4ff4fa1-1) trixie; urgency=medium
 
   * AdapterFlag is split into AdapterCapability (what a plugin declares
