@@ -67,6 +67,50 @@ v1::DeviceClass classFromProductData(const Json &product)
     return v1::DeviceClass::Unknown;
 }
 
+/// What the bridge says a room is. Hue's archetypes are the household's
+/// choice in the Hue app, so they are worth carrying; the ones phi has no
+/// class for go to the nearest ("porch" is a terrace, "man_cave" is
+/// recreation), and the three storeys and "home" are a floor and the house.
+v1::RoomClass roomClassFromArchetype(const std::string &archetype)
+{
+    using RC = v1::RoomClass;
+    static const std::map<std::string, RC> table = {
+        {"living_room", RC::LivingRoom}, {"lounge", RC::LivingRoom},
+        {"kitchen", RC::Kitchen},
+        {"dining", RC::DiningRoom},
+        {"bedroom", RC::Bedroom},
+        {"kids_bedroom", RC::ChildrensRoom}, {"nursery", RC::ChildrensRoom},
+        {"guest_room", RC::GuestRoom},
+        {"bathroom", RC::Bathroom},
+        {"toilet", RC::Toilet},
+        {"hallway", RC::Hallway},
+        {"front_door", RC::Entrance},
+        {"staircase", RC::Staircase},
+        {"office", RC::Office}, {"computer", RC::Office}, {"reading", RC::Office},
+        {"recreation", RC::Recreation}, {"man_cave", RC::Recreation},
+        {"gym", RC::Recreation}, {"music", RC::Recreation},
+        {"tv", RC::HomeCinema},
+        {"closet", RC::Closet},
+        {"storage", RC::Storage},
+        {"laundry_room", RC::Laundry},
+        {"studio", RC::Workshop},
+        {"garage", RC::Garage},
+        {"carport", RC::Carport},
+        {"driveway", RC::Driveway},
+        {"garden", RC::Garden},
+        {"terrace", RC::Terrace}, {"porch", RC::Terrace},
+        {"balcony", RC::Balcony},
+        {"barbecue", RC::Barbecue},
+        {"pool", RC::Pool},
+        {"attic", RC::Attic},
+        {"upstairs", RC::Floor}, {"downstairs", RC::Floor}, {"top_floor", RC::Floor},
+        {"home", RC::House},
+        {"other", RC::Other},
+    };
+    const auto it = table.find(str::toLower(archetype));
+    return it != table.end() ? it->second : RC::Unknown;
+}
+
 v1::Channel readChannel(const char *externalId, const char *name, v1::ChannelKind kind,
                         v1::ChannelDataType dataType)
 {
@@ -701,6 +745,7 @@ Snapshot buildSnapshot(const Resources &resources)
             continue;
         room.name = jsonString(jsonValue(obj, "metadata"), "name", false);
         room.zone = "room";
+        room.roomClass = roomClassFromArchetype(jsonString(jsonValue(obj, "metadata"), "archetype", false));
         room.metaJson = dump(obj);
         room.deviceExternalIds = memberships[room.externalId];
         snapshot.rooms.push_back(std::move(room));

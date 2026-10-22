@@ -99,7 +99,7 @@ Resources fullResources()
     resources.byType["button"] = arrayOf(kButtons);
     resources.byType["relative_rotary"] = arrayOf(R"json([{"id":"rr1","type":"relative_rotary","owner":{"rid":"dev-dial","rtype":"device"}}])json");
     resources.byType["zigbee_connectivity"] = arrayOf(kConnectivity);
-    resources.byType["room"] = arrayOf(R"json([{"id":"room-1","type":"room","metadata":{"name":"Kitchen"},"children":[{"rid":"dev-lamp","rtype":"device"}]}])json");
+    resources.byType["room"] = arrayOf(R"json([{"id":"room-1","type":"room","metadata":{"name":"Kitchen","archetype":"kitchen"},"children":[{"rid":"dev-lamp","rtype":"device"}]}])json");
     // A zone the way a bridge really sends one: its children are the light
     // services it groups, never the devices behind them.
     resources.byType["zone"] = arrayOf(R"json([{"id":"zone-1","type":"zone","metadata":{"name":"TV"},
@@ -173,6 +173,8 @@ void testWhatABridgeTurnsInto()
     PHI_CHECK(dial.channelSource.at("dial") == "relative_rotary");
 
     PHI_CHECK(snapshot.rooms.size() == 1 && snapshot.rooms[0].deviceExternalIds.size() == 1);
+    // The archetype the household picked in the Hue app travels as the class.
+    PHI_CHECK(snapshot.rooms[0].roomClass == v1::RoomClass::Kitchen);
 
     // The zone's members are the devices owning those services. Reading only
     // the device children, as this did, made every zone on a real bridge an
