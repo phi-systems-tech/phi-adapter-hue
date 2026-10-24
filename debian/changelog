@@ -1,3 +1,10 @@
+phi-adapter-hue (0.0~git202610241658.2842acf-1) trixie; urgency=medium
+
+  * Rebuilt against phi-adapter-sdk 0.25.0 (cameraFeatures, voice and
+    camera kinds; ABI)
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Sat, 24 Oct 2026 16:58:34 +0200
+
 phi-adapter-hue (0.0~git202610221933.fc53ebe-1) trixie; urgency=medium
 
   * A Hue room's archetype travels as its RoomClass; built against
