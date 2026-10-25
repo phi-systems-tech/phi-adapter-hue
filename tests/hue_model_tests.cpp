@@ -116,74 +116,74 @@ void testWhatABridgeTurnsInto()
     PHI_CHECK(snapshot.discoveryResourceId == "disc-1");
 
     const DeviceEntry &lamp = snapshot.devices.at("dev-lamp");
-    PHI_CHECK(lamp.device.name == "Kitchen");
-    PHI_CHECK(lamp.device.deviceClass == v1::DeviceClass::Light);
-    PHI_CHECK(lamp.device.model == "LCT007");
+    PHI_CHECK(lamp.device.name() == "Kitchen");
+    PHI_CHECK(lamp.device.deviceClass() == v1::DeviceClass::Light);
+    PHI_CHECK(lamp.device.model() == "LCT007");
     PHI_CHECK(lamp.light.resourceId == "light-1");
     PHI_CHECK(lamp.light.on.has_value() && *lamp.light.on);
     PHI_CHECK(lamp.channel("on") != nullptr && lamp.channel("bri") != nullptr
               && lamp.channel("ct") != nullptr && lamp.channel("color") != nullptr);
-    PHI_CHECK(lamp.channel("ct")->minValue == 153 && lamp.channel("ct")->maxValue == 500);
-    PHI_CHECK(lamp.channel("bri")->hasValue && std::get<double>(lamp.channel("bri")->lastValue) == 50.0);
-    PHI_CHECK(parseObject(lamp.channel("color")->metaJson).contains("colorCapabilities"));
-    PHI_CHECK(lamp.device.effects.size() == 2 && lamp.device.effects[0].id == "candle");
+    PHI_CHECK(lamp.channel("ct")->minValue() == 153 && lamp.channel("ct")->maxValue() == 500);
+    PHI_CHECK(lamp.channel("bri")->hasValue() && std::get<double>(lamp.channel("bri")->lastValue()) == 50.0);
+    PHI_CHECK(parseObject(lamp.channel("color")->metaJson()).contains("colorCapabilities"));
+    PHI_CHECK(lamp.device.effects().size() == 2 && lamp.device.effects()[0].id() == "candle");
     PHI_CHECK(lamp.channelSource.at("on") == "light");
     const auto color = colorOf(lamp.light);
     PHI_CHECK(color.has_value());
 
     // The bridge itself is a gateway, not a sensor.
     const DeviceEntry &bridge = snapshot.devices.at("dev-bridge");
-    PHI_CHECK_MSG(bridge.device.deviceClass == v1::DeviceClass::Gateway, "the bridge is class %d",
-                  static_cast<int>(bridge.device.deviceClass));
+    PHI_CHECK_MSG(bridge.device.deviceClass() == v1::DeviceClass::Gateway, "the bridge is class %d",
+                  static_cast<int>(bridge.device.deviceClass()));
     PHI_CHECK(bridge.channel("zigbee_status") != nullptr);
-    PHI_CHECK(bridge.channel("zigbee_status")->hasValue
-              && std::get<std::int64_t>(bridge.channel("zigbee_status")->lastValue)
+    PHI_CHECK(bridge.channel("zigbee_status")->hasValue()
+              && std::get<std::int64_t>(bridge.channel("zigbee_status")->lastValue())
                   == static_cast<std::int64_t>(v1::ConnectivityStatus::Connected));
 
     const DeviceEntry &plug = snapshot.devices.at("dev-plug");
-    PHI_CHECK(plug.device.deviceClass == v1::DeviceClass::Plug);
+    PHI_CHECK(plug.device.deviceClass() == v1::DeviceClass::Plug);
 
     // A lamp in colour mode reports mirek as null. The channel is a
     // capability and stays; only the value is absent. It used to come and
     // go with the mode, and phi-core recreated it each time.
     const DeviceEntry &strip = snapshot.devices.at("dev-strip");
     PHI_CHECK_MSG(strip.channel("ct") != nullptr, "a colour-mode lamp lost its ct channel");
-    PHI_CHECK(strip.channel("ct") != nullptr && !strip.channel("ct")->hasValue);
+    PHI_CHECK(strip.channel("ct") != nullptr && !strip.channel("ct")->hasValue());
     PHI_CHECK(!strip.light.mired.has_value());
     PHI_CHECK(strip.channel("color") != nullptr);
     Resources warm = fullResources();
     warm.byType["light"][2]["color_temperature"]["mirek"] = 300;
     const Snapshot warmSnapshot = buildSnapshot(warm);
     const DeviceEntry &warmStrip = warmSnapshot.devices.at("dev-strip");
-    PHI_CHECK(warmStrip.channel("ct")->hasValue);
+    PHI_CHECK(warmStrip.channel("ct")->hasValue());
     PHI_CHECK_MSG(warmStrip.definitionKey() == strip.definitionKey(),
                   "switching colour mode changed the definition");
 
     // Four buttons and a dial, numbered by control id.
     const DeviceEntry &dial = snapshot.devices.at("dev-dial");
-    PHI_CHECK(dial.device.deviceClass == v1::DeviceClass::Button);
+    PHI_CHECK(dial.device.deviceClass() == v1::DeviceClass::Button);
     for (const char *id : {"button1", "button2", "button3", "button4", "dial", "battery", "zigbee_status"})
         PHI_CHECK_MSG(dial.channel(id) != nullptr, "the dial has no %s channel", id);
-    PHI_CHECK(dial.channel("button2")->name == "Button 2");
-    PHI_CHECK(v1::hasFlag(dial.device.flags, v1::DeviceFlag::Battery));
-    PHI_CHECK(std::get<std::int64_t>(dial.channel("battery")->lastValue) == 87);
-    PHI_CHECK(std::get<std::int64_t>(dial.channel("zigbee_status")->lastValue)
+    PHI_CHECK(dial.channel("button2")->name() == "Button 2");
+    PHI_CHECK(v1::hasFlag(dial.device.flags(), v1::DeviceFlag::Battery));
+    PHI_CHECK(std::get<std::int64_t>(dial.channel("battery")->lastValue()) == 87);
+    PHI_CHECK(std::get<std::int64_t>(dial.channel("zigbee_status")->lastValue())
               == static_cast<std::int64_t>(v1::ConnectivityStatus::Limited));
     PHI_CHECK(dial.channelSource.at("button1") == "button");
     PHI_CHECK(dial.channelSource.at("dial") == "relative_rotary");
 
-    PHI_CHECK(snapshot.rooms.size() == 1 && snapshot.rooms[0].deviceExternalIds.size() == 1);
+    PHI_CHECK(snapshot.rooms.size() == 1 && snapshot.rooms[0].deviceExternalIds().size() == 1);
     // The archetype the household picked in the Hue app travels as the class.
-    PHI_CHECK(snapshot.rooms[0].roomClass == v1::RoomClass::Kitchen);
+    PHI_CHECK(snapshot.rooms[0].roomClass() == v1::RoomClass::Kitchen);
 
     // The zone's members are the devices owning those services. Reading only
     // the device children, as this did, made every zone on a real bridge an
     // empty group - and nothing here noticed, because the fixture had no zone.
     PHI_CHECK(snapshot.groups.size() == 1);
-    PHI_CHECK(snapshot.groups[0].name == "TV");
-    PHI_CHECK(snapshot.groups[0].deviceExternalIds
+    PHI_CHECK(snapshot.groups[0].name() == "TV");
+    PHI_CHECK(snapshot.groups[0].deviceExternalIds()
               == (std::vector<std::string>{"dev-lamp", "dev-strip"}));
-    PHI_CHECK(snapshot.scenes.size() == 1 && snapshot.scenes[0].scopeExternalId == "room-1");
+    PHI_CHECK(snapshot.scenes.size() == 1 && snapshot.scenes[0].scopeExternalId() == "room-1");
 
     // The same answers give the same key; a renamed device does not.
     Resources renamed = fullResources();
@@ -223,7 +223,7 @@ void testAPollThatCouldNotFetchEverything()
     for (const char *id : {"button1", "button2", "button3", "button4", "battery"})
         PHI_CHECK_MSG(dial.channel(id) != nullptr, "%s was lost to a failed fetch", id);
     PHI_CHECK(dial.channelSource.at("button1") == "button");
-    PHI_CHECK(v1::hasFlag(dial.device.flags, v1::DeviceFlag::Battery));
+    PHI_CHECK(v1::hasFlag(dial.device.flags(), v1::DeviceFlag::Battery));
     PHI_CHECK(dial.channel("dial") != nullptr);
     PHI_CHECK(next.rooms.size() == 1);
     PHI_CHECK_MSG(dial.definitionKey() == before.devices.at("dev-dial").definitionKey(),
@@ -316,12 +316,8 @@ void testWhatTheStreamSays()
 void testWhereTheCallsGo()
 {
     v1::Adapter adapter;
-    adapter.externalId = "001788fffe21b7bc";
-    adapter.host = "00178821b7bc.local";
-    adapter.ip = "192.168.1.25";
-    adapter.port = 443;
-    adapter.token = "app-key-1";
-    adapter.options = v1::AdapterOption::UseTls;
+    adapter.setExternalId("001788fffe21b7bc").setHost("00178821b7bc.local").setIp("192.168.1.25")
+        .setPort(443).setToken("app-key-1").setOptions(v1::AdapterOption::UseTls);
 
     const ConnectionSettings settings = settingsFromAdapter(adapter, parseObject("{}"));
     PHI_CHECK(settings.address() == "192.168.1.25");
@@ -331,20 +327,20 @@ void testWhereTheCallsGo()
     PHI_CHECK(!settings.caFile.empty());
 
     const auto call = callFor(settings, "PUT", "clip/v2/resource/light/l1", R"({"on":{"on":true}})", true);
-    PHI_CHECK(call.url == "https://192.168.1.25:443/clip/v2/resource/light/l1");
-    PHI_CHECK(call.method == "PUT");
-    PHI_CHECK(call.tls.verifyHostname);
-    PHI_CHECK(call.tlsServerName == "001788fffe21b7bc");
-    PHI_CHECK(call.tls.caFile == bundledCaFile());
+    PHI_CHECK(call.url() == "https://192.168.1.25:443/clip/v2/resource/light/l1");
+    PHI_CHECK(call.method() == "PUT");
+    PHI_CHECK(call.tls().verifyHostname());
+    PHI_CHECK(call.tlsServerName() == "001788fffe21b7bc");
+    PHI_CHECK(call.tls().caFile() == bundledCaFile());
     bool keyed = false;
-    for (const auto &[name, value] : call.headers)
+    for (const auto &[name, value] : call.headers())
         keyed = keyed || (name == "hue-application-key" && value == "app-key-1");
     PHI_CHECK(keyed);
 
     // A probe does not know the bridge id: chain only, no name.
     ConnectionSettings probe = settings;
     probe.serverName.clear();
-    PHI_CHECK(!callFor(probe, "GET", "/api", {}, false).tls.verifyHostname);
+    PHI_CHECK(!callFor(probe, "GET", "/api", {}, false).tls().verifyHostname());
 
     // Meta overrides: port, useTls as a string, a CA of one's own.
     const ConnectionSettings plain = settingsFromAdapter(

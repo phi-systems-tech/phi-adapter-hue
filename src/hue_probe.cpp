@@ -64,16 +64,16 @@ void runProbe(net::HttpClient &http, const ConnectionSettings &settings,
             callFor(probeSettings, "GET", "/clip/v2/resource/bridge", {}, true),
             [done, appKey = settings.appKey](net::HttpClient::Result result) {
                 ProbeOutcome out;
-                if (result.ok) {
+                if (result.ok()) {
                     out.ok = true;
                     out.message = "Bridge reachable and credentials valid";
                     out.appKey = appKey;
                 } else {
-                    out.error = bridgeErrorText(result.body);
+                    out.error = bridgeErrorText(result.body());
                     if (out.error.empty())
-                        out.error = result.error.empty()
+                        out.error = result.error().empty()
                             ? "Hue bridge rejected the application key"
-                            : result.error;
+                            : result.error();
                 }
                 done(std::move(out));
             });
@@ -87,19 +87,19 @@ void runProbe(net::HttpClient &http, const ConnectionSettings &settings,
     const bool issued = http.send(callFor(probeSettings, "POST", "/api", body, false),
                                   [done](net::HttpClient::Result result) {
                                       ProbeOutcome out;
-                                      if (!result.ok) {
-                                          out.error = bridgeErrorText(result.body);
+                                      if (!result.ok()) {
+                                          out.error = bridgeErrorText(result.body());
                                           if (out.error.empty())
-                                              out.error = result.error.empty()
+                                              out.error = result.error().empty()
                                                   ? "Failed to create Hue application key"
-                                                  : result.error;
+                                                  : result.error();
                                           done(std::move(out));
                                           return;
                                       }
                                       std::string appKey;
                                       std::string clientKey;
                                       std::string error;
-                                      if (!parseCreateUser(result.body, &appKey, &clientKey, &error)) {
+                                      if (!parseCreateUser(result.body(), &appKey, &clientKey, &error)) {
                                           out.error = error;
                                           done(std::move(out));
                                           return;
@@ -108,8 +108,8 @@ void runProbe(net::HttpClient &http, const ConnectionSettings &settings,
                                       out.appKey = appKey;
                                       out.message = "Pairing successful";
                                       if (!clientKey.empty())
-                                          out.formValues.push_back(
-                                              {"clientKey", phicore::adapter::v1::ScalarValue(clientKey)});
+                                          out.formValues.emplace_back(
+                                              "clientKey", phicore::adapter::v1::ScalarValue(clientKey));
                                       done(std::move(out));
                                   });
     if (!issued)

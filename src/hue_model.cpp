@@ -36,10 +36,8 @@ constexpr const char *kTypeDiscovery = "zigbee_device_discovery";
 template <typename Enum>
 void addEnumChoice(v1::Channel &channel, const char *enumTypeName, Enum value)
 {
-    v1::AdapterConfigOption option;
-    option.value = std::to_string(static_cast<int>(value));
-    option.label = v1::enum_names::enumNameFor(enumTypeName, static_cast<int>(value), false);
-    channel.choices.push_back(std::move(option));
+    channel.addChoice(std::to_string(static_cast<int>(value)),
+                      v1::enum_names::enumNameFor(enumTypeName, static_cast<int>(value), false));
 }
 
 std::string deviceName(const Json &deviceObj)
@@ -115,11 +113,8 @@ v1::Channel readChannel(const char *externalId, const char *name, v1::ChannelKin
                         v1::ChannelDataType dataType)
 {
     v1::Channel channel;
-    channel.externalId = externalId;
-    channel.name = name;
-    channel.kind = kind;
-    channel.dataType = dataType;
-    channel.flags = v1::kChannelFlagDefaultRead;
+    channel.setExternalId(externalId).setName(name).setKind(kind).setDataType(dataType)
+        .setFlags(v1::kChannelFlagDefaultRead);
     return channel;
 }
 
@@ -128,17 +123,14 @@ void setValue(v1::Channel &channel, const std::optional<T> &value)
 {
     if (!value)
         return;
-    channel.hasValue = true;
-    channel.lastValue = *value;
+    channel.setLastValue(*value, 0);
 }
 
 v1::Channel makeOnChannel(bool value)
 {
     v1::Channel channel = readChannel("on", "Power", v1::ChannelKind::PowerOnOff,
                                       v1::ChannelDataType::Bool);
-    channel.flags = v1::kChannelFlagDefaultWrite;
-    channel.hasValue = true;
-    channel.lastValue = value;
+    channel.setFlags(v1::kChannelFlagDefaultWrite).setLastValue(value, 0);
     return channel;
 }
 
@@ -146,12 +138,8 @@ v1::Channel makeBrightnessChannel(double value)
 {
     v1::Channel channel = readChannel("bri", "Brightness", v1::ChannelKind::Brightness,
                                       v1::ChannelDataType::Float);
-    channel.flags = v1::kChannelFlagDefaultWrite;
-    channel.minValue = 0.0;
-    channel.maxValue = 100.0;
-    channel.stepValue = 0.1;
-    channel.hasValue = true;
-    channel.lastValue = std::clamp(value, 0.0, 100.0);
+    channel.setFlags(v1::kChannelFlagDefaultWrite).setRange(0.0, 100.0, 0.1)
+        .setLastValue(std::clamp(value, 0.0, 100.0), 0);
     return channel;
 }
 
@@ -159,13 +147,8 @@ v1::Channel makeCtChannel(int value, int minValue, int maxValue)
 {
     v1::Channel channel = readChannel("ct", "Color temperature", v1::ChannelKind::ColorTemperature,
                                       v1::ChannelDataType::Int);
-    channel.flags = v1::kChannelFlagDefaultWrite;
-    channel.unit = "mired";
-    channel.minValue = minValue;
-    channel.maxValue = maxValue;
-    channel.stepValue = 1.0;
-    channel.hasValue = true;
-    channel.lastValue = static_cast<std::int64_t>(value);
+    channel.setFlags(v1::kChannelFlagDefaultWrite).setUnit("mired").setRange(minValue, maxValue, 1.0)
+        .setLastValue(static_cast<std::int64_t>(value), 0);
     return channel;
 }
 
@@ -173,7 +156,7 @@ v1::Channel makeColorChannel(const Json &colorObj)
 {
     v1::Channel channel = readChannel("color", "Color", v1::ChannelKind::ColorRGB,
                                       v1::ChannelDataType::Color);
-    channel.flags = v1::kChannelFlagDefaultWrite;
+    channel.setFlags(v1::kChannelFlagDefaultWrite);
 
     Json meta = Json::object();
     const Json xy = jsonValue(colorObj, "xy");
@@ -191,7 +174,7 @@ v1::Channel makeColorChannel(const Json &colorObj)
             meta["colorCapabilities"] = Json{{"space", "cie1931_xy"}, {"gamut", points}};
     }
     if (!meta.empty())
-        channel.metaJson = dump(meta);
+        channel.setMetaJson(dump(meta));
     return channel;
 }
 
@@ -232,8 +215,8 @@ void applyEffects(v1::Device &device, const Json &source)
     if (!source.is_object())
         return;
     std::set<std::string> seen;
-    for (const v1::DeviceEffectDescriptor &existing : device.effects)
-        seen.insert(str::toLower(existing.id));
+    for (const v1::DeviceEffectDescriptor &existing : device.effects())
+        seen.insert(str::toLower(existing.id()));
 
     const auto addFrom = [&](const Json &values, const char *category) {
         if (!values.is_array())
@@ -249,12 +232,11 @@ void applyEffects(v1::Device &device, const Json &source)
                 continue;
             seen.insert(key);
             v1::DeviceEffectDescriptor descriptor;
-            descriptor.effect = effectKind(effect);
-            descriptor.id = effect;
-            descriptor.label = effectLabel(effect);
-            descriptor.description = "Hue effect " + descriptor.label;
-            descriptor.metaJson = dump(Json{{"hueEffect", effect}, {"hueEffectCategory", category}});
-            device.effects.push_back(std::move(descriptor));
+            const std::string label = effectLabel(effect);
+            descriptor.setEffect(effectKind(effect)).setId(effect).setLabel(label)
+                .setDescription("Hue effect " + label)
+                .setMetaJson(dump(Json{{"hueEffect", effect}, {"hueEffectCategory", category}}));
+            device.addEffect(std::move(descriptor));
         }
     };
     addFrom(jsonValue(jsonValue(source, "effects"), "effect_values"), "effects");
@@ -269,22 +251,20 @@ DeviceEntry &ensureDevice(Snapshot &snapshot, const std::string &deviceId,
     auto it = snapshot.devices.find(deviceId);
     if (it == snapshot.devices.end()) {
         DeviceEntry placeholder;
-        placeholder.device.externalId = deviceId;
-        placeholder.device.name = "Hue Device";
-        placeholder.device.deviceClass = fallbackClass;
+        placeholder.device.setExternalId(deviceId).setName("Hue Device").setDeviceClass(fallbackClass);
         it = snapshot.devices.emplace(deviceId, std::move(placeholder)).first;
     } else if (fallbackClass != v1::DeviceClass::Unknown
-               && it->second.device.deviceClass == v1::DeviceClass::Unknown) {
-        it->second.device.deviceClass = fallbackClass;
+               && it->second.device.deviceClass() == v1::DeviceClass::Unknown) {
+        it->second.device.setDeviceClass(fallbackClass);
     }
     return it->second;
 }
 
 void upsertChannel(DeviceEntry &entry, v1::Channel channel, const char *sourceType)
 {
-    entry.channelSource[channel.externalId] = sourceType;
+    entry.channelSource[channel.externalId()] = sourceType;
     for (v1::Channel &existing : entry.channels) {
-        if (existing.externalId == channel.externalId) {
+        if (existing.externalId() == channel.externalId()) {
             existing = std::move(channel);
             return;
         }
@@ -371,13 +351,13 @@ std::optional<std::int64_t> sensitivityOf(const Json &resource)
 
 void appendChannelKey(std::string &key, const v1::Channel &c)
 {
-    key += c.externalId + "|" + c.name + "|" + str::number(static_cast<int>(c.kind)) + "|"
-        + str::number(static_cast<int>(c.dataType)) + "|"
-        + str::number(static_cast<unsigned>(static_cast<std::uint32_t>(c.flags))) + "|" + c.unit
-        + "|" + str::number(c.minValue) + "|" + str::number(c.maxValue) + "|"
-        + str::number(c.stepValue) + "|" + c.metaJson + "|";
-    for (const v1::AdapterConfigOption &option : c.choices)
-        key += option.value + "=" + option.label + ",";
+    key += c.externalId() + "|" + c.name() + "|" + str::number(static_cast<int>(c.kind())) + "|"
+        + str::number(static_cast<int>(c.dataType())) + "|"
+        + str::number(static_cast<unsigned>(static_cast<std::uint32_t>(c.flags()))) + "|" + c.unit()
+        + "|" + str::number(c.minValue()) + "|" + str::number(c.maxValue()) + "|"
+        + str::number(c.stepValue()) + "|" + c.metaJson() + "|";
+    for (const v1::AdapterConfigOption &option : c.choices())
+        key += option.value() + "=" + option.label() + ",";
     key += ";";
 }
 
@@ -386,7 +366,7 @@ void appendChannelKey(std::string &key, const v1::Channel &c)
 const v1::Channel *DeviceEntry::channel(std::string_view id) const
 {
     for (const v1::Channel &c : channels) {
-        if (c.externalId == id)
+        if (c.externalId() == id)
             return &c;
     }
     return nullptr;
@@ -394,19 +374,19 @@ const v1::Channel *DeviceEntry::channel(std::string_view id) const
 
 std::string DeviceEntry::definitionKey() const
 {
-    std::string key = device.externalId + "|" + device.name + "|"
-        + str::number(static_cast<int>(device.deviceClass)) + "|"
-        + str::number(static_cast<unsigned>(static_cast<std::uint32_t>(device.flags))) + "|"
-        + device.manufacturer + "|" + device.model + "|" + device.firmware + "|" + device.metaJson
+    std::string key = device.externalId() + "|" + device.name() + "|"
+        + str::number(static_cast<int>(device.deviceClass())) + "|"
+        + str::number(static_cast<unsigned>(static_cast<std::uint32_t>(device.flags()))) + "|"
+        + device.manufacturer() + "|" + device.model() + "|" + device.firmware() + "|" + device.metaJson()
         + "|";
-    for (const v1::DeviceEffectDescriptor &effect : device.effects)
-        key += effect.id + "/" + effect.metaJson + ",";
+    for (const v1::DeviceEffectDescriptor &effect : device.effects())
+        key += effect.id() + "/" + effect.metaJson() + ",";
     key += "#";
     std::vector<const v1::Channel *> sorted;
     for (const v1::Channel &c : channels)
         sorted.push_back(&c);
     std::sort(sorted.begin(), sorted.end(),
-              [](const v1::Channel *a, const v1::Channel *b) { return a->externalId < b->externalId; });
+              [](const v1::Channel *a, const v1::Channel *b) { return a->externalId() < b->externalId(); });
     for (const v1::Channel *c : sorted)
         appendChannelKey(key, *c);
     return str::number(static_cast<unsigned long long>(std::hash<std::string>{}(key)));
@@ -476,14 +456,13 @@ Snapshot buildSnapshot(const Resources &resources)
         if (deviceId.empty())
             continue;
         DeviceEntry entry;
-        entry.device.externalId = deviceId;
-        entry.device.name = deviceName(deviceObj);
         const Json product = jsonValue(deviceObj, "product_data");
-        entry.device.manufacturer = jsonString(product, "manufacturer_name", false);
-        entry.device.model = jsonString(product, "model_id", false);
-        entry.device.firmware = jsonString(product, "software_version", false);
-        entry.device.deviceClass = classFromProductData(product);
-        entry.device.metaJson = dump(deviceObj);
+        entry.device.setExternalId(deviceId).setName(deviceName(deviceObj))
+            .setManufacturer(jsonString(product, "manufacturer_name", false))
+            .setModel(jsonString(product, "model_id", false))
+            .setFirmware(jsonString(product, "software_version", false))
+            .setDeviceClass(classFromProductData(product))
+            .setMetaJson(dump(deviceObj));
         applyEffects(entry.device, deviceObj);
         snapshot.devices.emplace(deviceId, std::move(entry));
     }
@@ -523,8 +502,7 @@ Snapshot buildSnapshot(const Resources &resources)
             if (mired > 0) {
                 entry.light.mired = mired;
             } else {
-                channel.hasValue = false;
-                channel.lastValue = v1::ScalarValue{};
+                channel.clearValue();
             }
             upsertChannel(entry, std::move(channel), kTypeLight);
         }
@@ -556,7 +534,7 @@ Snapshot buildSnapshot(const Resources &resources)
                                               v1::ChannelKind::ButtonEvent,
                                               v1::ChannelDataType::Int);
             if (!single)
-                channel.name = "Button " + str::number(controlId);
+                channel.setName("Button " + str::number(controlId));
             upsertChannel(entry, std::move(channel), kTypeButton);
         }
     }
@@ -602,10 +580,7 @@ Snapshot buildSnapshot(const Resources &resources)
             v1::Channel channel = readChannel("motion_sensitivity", "Motion sensitivity",
                                               v1::ChannelKind::MotionSensitivity,
                                               v1::ChannelDataType::Enum);
-            channel.minValue = 1.0;
-            channel.maxValue = 5.0;
-            channel.stepValue = 1.0;
-            channel.metaJson = dump(Json{{"enumName", "SensitivityLevel"}});
+            channel.setRange(1.0, 5.0, 1.0).setMetaJson(dump(Json{{"enumName", "SensitivityLevel"}}));
             for (const v1::SensitivityLevel level :
                  {v1::SensitivityLevel::Low, v1::SensitivityLevel::Medium, v1::SensitivityLevel::High,
                   v1::SensitivityLevel::VeryHigh, v1::SensitivityLevel::Max})
@@ -633,7 +608,7 @@ Snapshot buildSnapshot(const Resources &resources)
         DeviceEntry &entry = ensureDevice(snapshot, deviceId, v1::DeviceClass::Sensor);
         v1::Channel channel = readChannel("temperature", "Temperature", v1::ChannelKind::Temperature,
                                           v1::ChannelDataType::Float);
-        channel.unit = "C";
+        channel.setUnit("C");
         setValue(channel, temperatureOf(obj));
         upsertChannel(entry, std::move(channel), kTypeTemperature);
     }
@@ -645,7 +620,7 @@ Snapshot buildSnapshot(const Resources &resources)
         DeviceEntry &entry = ensureDevice(snapshot, deviceId, v1::DeviceClass::Sensor);
         v1::Channel channel = readChannel("illuminance", "Illuminance", v1::ChannelKind::Illuminance,
                                           v1::ChannelDataType::Int);
-        channel.unit = "lx";
+        channel.setUnit("lx");
         setValue(channel, luxOf(obj));
         upsertChannel(entry, std::move(channel), kTypeLightLevel);
     }
@@ -657,12 +632,10 @@ Snapshot buildSnapshot(const Resources &resources)
         DeviceEntry &entry = ensureDevice(snapshot, deviceId, v1::DeviceClass::Sensor);
         v1::Channel channel = readChannel("battery", "Battery", v1::ChannelKind::Battery,
                                           v1::ChannelDataType::Int);
-        channel.minValue = 0.0;
-        channel.maxValue = 100.0;
-        channel.stepValue = 1.0;
+        channel.setRange(0.0, 100.0, 1.0);
         setValue(channel, batteryOf(obj));
         upsertChannel(entry, std::move(channel), kTypeDevicePower);
-        entry.device.flags |= v1::DeviceFlag::Battery;
+        entry.device.setFlags(entry.device.flags() | v1::DeviceFlag::Battery);
     }
 
     for (const Json &obj : resources.array(kTypeConnectivity)) {
@@ -679,8 +652,7 @@ Snapshot buildSnapshot(const Resources &resources)
               v1::ConnectivityStatus::Limited, v1::ConnectivityStatus::Disconnected})
             addEnumChoice(channel, "ConnectivityStatus", status);
         if (const auto status = connectivityOf(obj)) {
-            channel.hasValue = true;
-            channel.lastValue = static_cast<std::int64_t>(*status);
+            channel.setLastValue(static_cast<std::int64_t>(*status), 0);
         }
         upsertChannel(entry, std::move(channel), kTypeConnectivity);
     }
@@ -740,37 +712,36 @@ Snapshot buildSnapshot(const Resources &resources)
 
     for (const Json &obj : resources.array(kTypeRoom)) {
         v1::Room room;
-        room.externalId = jsonString(obj, "id");
-        if (room.externalId.empty())
+        room.setExternalId(jsonString(obj, "id"));
+        if (room.externalId().empty())
             continue;
-        room.name = jsonString(jsonValue(obj, "metadata"), "name", false);
-        room.zone = "room";
-        room.roomClass = roomClassFromArchetype(jsonString(jsonValue(obj, "metadata"), "archetype", false));
-        room.metaJson = dump(obj);
-        room.deviceExternalIds = memberships[room.externalId];
+        room.setName(jsonString(jsonValue(obj, "metadata"), "name", false))
+            .setZone("room")
+            .setRoomClass(roomClassFromArchetype(jsonString(jsonValue(obj, "metadata"), "archetype", false)))
+            .setMetaJson(dump(obj))
+            .setDeviceExternalIds(memberships[room.externalId()]);
         snapshot.rooms.push_back(std::move(room));
     }
     for (const Json &obj : resources.array(kTypeZone)) {
         v1::Group group;
-        group.externalId = jsonString(obj, "id");
-        if (group.externalId.empty())
+        group.setExternalId(jsonString(obj, "id"));
+        if (group.externalId().empty())
             continue;
-        group.name = jsonString(jsonValue(obj, "metadata"), "name", false);
-        group.zone = "zone";
-        group.metaJson = dump(obj);
-        group.deviceExternalIds = memberships[group.externalId];
+        group.setName(jsonString(jsonValue(obj, "metadata"), "name", false))
+            .setZone("zone")
+            .setMetaJson(dump(obj))
+            .setDeviceExternalIds(memberships[group.externalId()]);
         snapshot.groups.push_back(std::move(group));
     }
     for (const Json &obj : resources.array(kTypeScene)) {
         v1::Scene scene;
-        scene.externalId = jsonString(obj, "id");
-        if (scene.externalId.empty())
+        scene.setExternalId(jsonString(obj, "id"));
+        if (scene.externalId().empty())
             continue;
-        scene.name = jsonString(jsonValue(obj, "metadata"), "name", false);
         const Json group = jsonValue(obj, "group");
-        scene.scopeExternalId = jsonString(group, "rid");
-        scene.scopeType = jsonString(group, "rtype");
-        scene.metaJson = dump(obj);
+        scene.setName(jsonString(jsonValue(obj, "metadata"), "name", false))
+            .setScope(jsonString(group, "rtype"), jsonString(group, "rid"))
+            .setMetaJson(dump(obj));
         snapshot.scenes.push_back(std::move(scene));
     }
     for (const Json &obj : resources.array(kTypeDiscovery)) {
@@ -794,22 +765,22 @@ void carryOver(const Snapshot &previous, const std::vector<std::string> &missing
         if (before == previous.devices.end())
             continue;
         for (const v1::Channel &channel : before->second.channels) {
-            const auto source = before->second.channelSource.find(channel.externalId);
+            const auto source = before->second.channelSource.find(channel.externalId());
             if (source == before->second.channelSource.end() || !missing.count(source->second))
                 continue;
-            if (entry.channel(channel.externalId) != nullptr)
+            if (entry.channel(channel.externalId()) != nullptr)
                 continue;
             v1::Channel kept = channel;
             // What was reported before stands; nothing new was learned.
-            entry.channelSource[kept.externalId] = source->second;
+            entry.channelSource[kept.externalId()] = source->second;
             entry.channels.push_back(std::move(kept));
         }
-        if (missing.count(kTypeDevicePower) && v1::hasFlag(before->second.device.flags, v1::DeviceFlag::Battery))
-            entry.device.flags |= v1::DeviceFlag::Battery;
+        if (missing.count(kTypeDevicePower) && v1::hasFlag(before->second.device.flags(), v1::DeviceFlag::Battery))
+            entry.device.setFlags(entry.device.flags() | v1::DeviceFlag::Battery);
         // What the device is was decided by resources this poll may not
         // have seen; the last full answer stands.
-        if (before->second.device.deviceClass != v1::DeviceClass::Unknown)
-            entry.device.deviceClass = before->second.device.deviceClass;
+        if (before->second.device.deviceClass() != v1::DeviceClass::Unknown)
+            entry.device.setDeviceClass(before->second.device.deviceClass());
     }
     if (missing.count(kTypeRoom))
         next.rooms = previous.rooms;

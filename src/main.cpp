@@ -31,12 +31,12 @@ class HueFactory final : public sdk::AdapterFactory
 protected:
     void onBootstrap(const sdk::BootstrapRequest &request) override
     {
-        m_settings = settingsFromAdapter(request.adapter, parseObject(request.adapter.metaJson));
+        m_settings = settingsFromAdapter(request.adapter(), parseObject(request.adapter().metaJson()));
     }
 
     void onFactoryConfigChanged(const sdk::ConfigChangedRequest &request) override
     {
-        m_settings = settingsFromAdapter(request.adapter, parseObject(request.adapter.metaJson));
+        m_settings = settingsFromAdapter(request.adapter(), parseObject(request.adapter().metaJson()));
     }
 
     // The probe is an HTTPS round trip with a ten second budget; on the host
@@ -79,19 +79,19 @@ protected:
 
     void onFactoryActionInvoke(const sdk::AdapterActionInvokeRequest &request) override
     {
-        if (request.actionId != "probe") {
-            answer(request.cmdId, v1::CmdStatus::NotSupported, "Unsupported factory action");
+        if (request.actionId() != "probe") {
+            answer(request.cmdId(), v1::CmdStatus::NotSupported, "Unsupported factory action");
             return;
         }
         ConnectionSettings settings = m_settings;
-        applyProbeParams(parseObject(request.paramsJson), settings);
+        applyProbeParams(parseObject(request.paramsJson()), settings);
         if (settings.caFile.empty())
             settings.caFile = bundledCaFile();
 
         if (!m_http) {
             phi::runtime::Loop *loop = phi::runtime::Loop::current();
             if (loop == nullptr) {
-                answer(request.cmdId, v1::CmdStatus::Failure, "No loop on the factory thread");
+                answer(request.cmdId(), v1::CmdStatus::Failure, "No loop on the factory thread");
                 return;
             }
             m_http.emplace(*loop);
@@ -99,24 +99,18 @@ protected:
         log(sdk::LogLevel::Debug, sdk::LogCategory::Discovery, "probing %1 (key set: %2)",
             {v1::Utf8String(settings.baseUrl()), !settings.appKey.empty()});
 
-        const v1::CmdId cmdId = request.cmdId;
+        const v1::CmdId cmdId = request.cmdId();
         runProbe(*m_http, settings, [this, cmdId](ProbeOutcome outcome) {
-            v1::ActionResponse response;
-            response.id = cmdId;
-            response.tsMs = 0;
             if (!outcome.ok) {
-                response.status = v1::CmdStatus::Failure;
-                response.error = outcome.error;
-                response.resultType = v1::ActionResultType::None;
-                send(response);
+                send(v1::ActionResponse::failure(cmdId, v1::CmdStatus::Failure, outcome.error));
                 return;
             }
             // Factory-scope meta updates are not part of the contract; what
             // pairing produced travels back as form values on the answer.
-            response.formValues = std::move(outcome.formValues);
-            response.status = v1::CmdStatus::Success;
-            response.resultType = v1::ActionResultType::String;
-            response.resultValue = outcome.appKey.empty() ? outcome.message : outcome.appKey;
+            auto response = v1::ActionResponse::success(cmdId);
+            response.setFormValues(std::move(outcome.formValues))
+                .setResult(outcome.appKey.empty() ? outcome.message : outcome.appKey,
+                           v1::ActionResultType::String);
             send(response);
         });
     }
@@ -128,12 +122,7 @@ protected:
 private:
     void answer(v1::CmdId cmdId, v1::CmdStatus status, const std::string &error)
     {
-        v1::ActionResponse response;
-        response.id = cmdId;
-        response.status = status;
-        response.error = error;
-        response.resultType = v1::ActionResultType::None;
-        send(response);
+        send(v1::ActionResponse::failure(cmdId, status, error));
     }
 
     void send(const v1::ActionResponse &response)

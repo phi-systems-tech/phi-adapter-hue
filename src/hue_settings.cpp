@@ -54,11 +54,11 @@ const char *bundledCaFile()
 ConnectionSettings settingsFromAdapter(const v1::Adapter &adapter, const Json &meta)
 {
     ConnectionSettings settings;
-    settings.host = str::trimmed(adapter.host);
-    settings.ip = str::trimmed(adapter.ip);
-    settings.port = static_cast<int>(adapter.port);
-    settings.appKey = str::trimmed(adapter.token);
-    settings.serverName = str::trimmed(adapter.externalId);
+    settings.host = str::trimmed(adapter.host());
+    settings.ip = str::trimmed(adapter.ip());
+    settings.port = static_cast<int>(adapter.port());
+    settings.appKey = str::trimmed(adapter.token());
+    settings.serverName = str::trimmed(adapter.externalId());
 
     if (meta.contains("host"))
         settings.host = jsonString(meta, "host");
@@ -74,7 +74,7 @@ ConnectionSettings settingsFromAdapter(const v1::Adapter &adapter, const Json &m
             meta.at("useTls").is_boolean() ? v1::ScalarValue(meta.at("useTls").get<bool>())
                                            : v1::ScalarValue(jsonScalarText(meta.at("useTls"))),
             true);
-    } else if (v1::hasFlag(adapter.options, v1::AdapterOption::UseTls)) {
+    } else if (v1::hasFlag(adapter.options(), v1::AdapterOption::UseTls)) {
         settings.useTls = true;
     } else if (settings.port > 0) {
         settings.useTls = settings.port == 443;
@@ -114,27 +114,23 @@ void applyProbeParams(const Json &params, ConnectionSettings &settings)
 net::HttpClient::Call callFor(const ConnectionSettings &settings, std::string_view method,
                               std::string_view path, std::string body, bool withAppKey)
 {
-    net::HttpClient::Call call;
     std::string target(path);
     if (target.empty() || target.front() != '/')
         target.insert(target.begin(), '/');
-    call.url = settings.baseUrl() + target;
-    call.method = std::string(method);
-    call.body = std::move(body);
-    call.headers.emplace_back("Accept", "application/json");
-    call.headers.emplace_back("User-Agent", "phi-adapter-hue-ipc/2.0");
-    if (!call.body.empty())
-        call.headers.emplace_back("Content-Type", "application/json");
+    net::HttpClient::Call call(settings.baseUrl() + target, std::string(method));
+    call.addHeader("Accept", "application/json");
+    call.addHeader("User-Agent", "phi-adapter-hue-ipc/2.0");
+    if (!body.empty())
+        call.setBody(std::move(body), "application/json");
     if (withAppKey && !settings.appKey.empty())
-        call.headers.emplace_back("hue-application-key", settings.appKey);
-    call.timeout = 10000ms;
-    call.tls.enabled = settings.useTls;
-    call.tls.caFile = settings.caFile;
+        call.addHeader("hue-application-key", settings.appKey);
+    call.setTimeout(10000ms);
+    call.tls().setEnabled(settings.useTls).setCaFile(settings.caFile);
     // The certificate names the bridge id, never the address it was dialled
     // by. With the id known the check is against it; a probe that does not
     // know it yet verifies the chain alone - Signify's root, nobody else's.
-    call.tls.verifyHostname = !settings.serverName.empty();
-    call.tlsServerName = settings.serverName;
+    call.tls().setVerifyHostname(!settings.serverName.empty());
+    call.setTlsServerName(settings.serverName);
     return call;
 }
 

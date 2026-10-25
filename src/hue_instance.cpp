@@ -116,19 +116,19 @@ private:
 
 std::string roomKey(const v1::Room &room)
 {
-    return room.name + "|" + room.zone + "|" + room.metaJson + "|"
-        + str::join(room.deviceExternalIds, ",");
+    return room.name() + "|" + room.zone() + "|" + room.metaJson() + "|"
+        + str::join(room.deviceExternalIds(), ",");
 }
 
 std::string groupKey(const v1::Group &group)
 {
-    return group.name + "|" + group.zone + "|" + group.metaJson + "|"
-        + str::join(group.deviceExternalIds, ",");
+    return group.name() + "|" + group.zone() + "|" + group.metaJson() + "|"
+        + str::join(group.deviceExternalIds(), ",");
 }
 
 std::string sceneKey(const v1::Scene &scene)
 {
-    return scene.name + "|" + scene.scopeExternalId + "|" + scene.scopeType + "|" + scene.metaJson;
+    return scene.name() + "|" + scene.scopeExternalId() + "|" + scene.scopeType() + "|" + scene.metaJson();
 }
 
 std::string hueEffectNameFor(v1::DeviceEffect effect)
@@ -195,8 +195,8 @@ protected:
         if (m_lifecycle == Lifecycle::Stopped || !m_http)
             return;
         const ConnectionSettings previous = m_settings;
-        m_info = request.adapter;
-        m_meta = parseObject(request.adapter.metaJson);
+        m_info = request.adapter();
+        m_meta = parseObject(request.adapter().metaJson());
         m_settings = settingsFromAdapter(m_info, m_meta);
         m_pollIntervalMs = std::clamp(jsonInt(m_meta, "pollIntervalMs", 5000), 1000, 600000);
         m_retryIntervalMs = std::clamp(jsonInt(m_meta, "retryIntervalMs", 10000), 1000, 600000);
@@ -227,38 +227,38 @@ protected:
     void onChannelInvoke(const sdk::ChannelInvokeRequest &request) override
     {
         if (m_lifecycle != Lifecycle::Running || !m_http) {
-            answerCommand(request.cmdId, v1::CmdStatus::TemporarilyOffline, "Instance is not running");
+            answerCommand(request.cmdId(), v1::CmdStatus::TemporarilyOffline, "Instance is not running");
             return;
         }
-        const auto deviceIt = m_snapshot.devices.find(request.deviceExternalId);
+        const auto deviceIt = m_snapshot.devices.find(request.deviceExternalId());
         if (deviceIt == m_snapshot.devices.end()) {
-            answerCommand(request.cmdId, v1::CmdStatus::NotSupported, "Unknown device");
+            answerCommand(request.cmdId(), v1::CmdStatus::NotSupported, "Unknown device");
             return;
         }
         const DeviceEntry &entry = deviceIt->second;
         if (entry.light.resourceId.empty()) {
-            answerCommand(request.cmdId, v1::CmdStatus::InvalidArgument,
+            answerCommand(request.cmdId(), v1::CmdStatus::InvalidArgument,
                           "No Hue light resource for device");
             return;
         }
         CommandValue value;
-        value.scalar = request.value;
-        if (!request.hasScalarValue)
-            value.json = parseJson(request.valueJson);
+        value.scalar = request.value();
+        if (!request.hasScalarValue())
+            value.json = parseJson(request.valueJson());
         std::string error;
-        const std::string body = lightCommandBody(request.channelExternalId, value, &error);
+        const std::string body = lightCommandBody(request.channelExternalId(), value, &error);
         if (body.empty()) {
-            answerCommand(request.cmdId, v1::CmdStatus::InvalidArgument, error);
+            answerCommand(request.cmdId(), v1::CmdStatus::InvalidArgument, error);
             return;
         }
-        const v1::CmdId cmdId = request.cmdId;
+        const v1::CmdId cmdId = request.cmdId();
         enqueue(callFor(m_settings, "PUT", "/clip/v2/resource/light/" + entry.light.resourceId, body,
                         true),
                 [this, cmdId](net::HttpClient::Result result) {
                     // The bridge's answer, not the request having left. The
                     // new state comes back on the event stream like every
                     // other state; nothing is reported from here.
-                    if (result.ok)
+                    if (result.ok())
                         answerCommand(cmdId, v1::CmdStatus::Success, {});
                     else
                         answerCommand(cmdId, failureStatus(result), failureText(result, "Hue command failed"));
@@ -267,65 +267,62 @@ protected:
 
     void onAdapterActionInvoke(const sdk::AdapterActionInvokeRequest &request) override
     {
-        const std::string actionId = str::trimmed(request.actionId);
+        const std::string actionId = str::trimmed(request.actionId());
         if (actionId != "startDeviceDiscovery") {
-            answerAction(request.cmdId, v1::CmdStatus::NotImplemented, "Unsupported adapter action");
+            answerAction(request.cmdId(), v1::CmdStatus::NotImplemented, "Unsupported adapter action");
             return;
         }
         if (m_lifecycle != Lifecycle::Running || !m_http) {
-            answerAction(request.cmdId, v1::CmdStatus::TemporarilyOffline, "Instance is not running");
+            answerAction(request.cmdId(), v1::CmdStatus::TemporarilyOffline, "Instance is not running");
             return;
         }
         if (m_snapshot.discoveryResourceId.empty()) {
-            answerAction(request.cmdId, v1::CmdStatus::Failure, "Discovery resource not ready yet");
+            answerAction(request.cmdId(), v1::CmdStatus::Failure, "Discovery resource not ready yet");
             return;
         }
         const std::string body = dump(Json{
             {"state", "start"}, {"action", Json{{"type", "search"}, {"action_type", "search"}}}});
-        const v1::CmdId cmdId = request.cmdId;
+        const v1::CmdId cmdId = request.cmdId();
         enqueue(callFor(m_settings, "PUT",
                         "/clip/v2/resource/zigbee_device_discovery/" + m_snapshot.discoveryResourceId,
                         body, true),
                 [this, cmdId](net::HttpClient::Result result) {
-                    if (!result.ok) {
+                    if (!result.ok()) {
                         answerAction(cmdId, failureStatus(result),
                                      failureText(result, "Failed to start Hue Zigbee discovery"));
                         return;
                     }
-                    v1::ActionResponse response;
-                    response.id = cmdId;
-                    response.tsMs = nowMs();
-                    response.status = v1::CmdStatus::Success;
-                    response.resultType = v1::ActionResultType::String;
-                    response.resultValue = std::string("Hue Zigbee discovery started");
-                    sendAction(response);
+                    sendAction(v1::ActionResponse::success(cmdId)
+                                   .setTsMs(nowMs())
+                                   .setResult(std::string("Hue Zigbee discovery started"),
+                                              v1::ActionResultType::String));
                 });
     }
 
     void onDeviceNameUpdate(const sdk::DeviceNameUpdateRequest &request) override
     {
         if (m_lifecycle != Lifecycle::Running || !m_http) {
-            answerCommand(request.cmdId, v1::CmdStatus::TemporarilyOffline, "Instance is not running");
+            answerCommand(request.cmdId(), v1::CmdStatus::TemporarilyOffline, "Instance is not running");
             return;
         }
-        const std::string name = str::trimmed(request.name);
-        if (request.deviceExternalId.empty() || name.empty()) {
-            answerCommand(request.cmdId, v1::CmdStatus::InvalidArgument, "Device and name are required");
+        const std::string name = str::trimmed(request.name());
+        if (request.deviceExternalId().empty() || name.empty()) {
+            answerCommand(request.cmdId(), v1::CmdStatus::InvalidArgument, "Device and name are required");
             return;
         }
         const std::string body = dump(Json{{"metadata", Json{{"name", name}}}});
-        const v1::CmdId cmdId = request.cmdId;
-        const std::string deviceId = request.deviceExternalId;
+        const v1::CmdId cmdId = request.cmdId();
+        const std::string deviceId = request.deviceExternalId();
         enqueue(callFor(m_settings, "PUT", "/clip/v2/resource/device/" + deviceId, body, true),
                 [this, cmdId, deviceId, name](net::HttpClient::Result result) {
-                    if (!result.ok) {
+                    if (!result.ok()) {
                         answerCommand(cmdId, failureStatus(result),
                                       failureText(result, "Rename request failed"));
                         return;
                     }
                     const auto it = m_snapshot.devices.find(deviceId);
                     if (it != m_snapshot.devices.end()) {
-                        it->second.device.name = name;
+                        it->second.device.setName(name);
                         announce(it->second);
                     }
                     answerCommand(cmdId, v1::CmdStatus::Success, {});
@@ -335,12 +332,12 @@ protected:
     void onEntityNameUpdate(const sdk::EntityNameUpdateRequest &request) override
     {
         if (m_lifecycle != Lifecycle::Running || !m_http) {
-            answerCommand(request.cmdId, v1::CmdStatus::TemporarilyOffline, "Instance is not running");
+            answerCommand(request.cmdId(), v1::CmdStatus::TemporarilyOffline, "Instance is not running");
             return;
         }
-        const std::string name = str::trimmed(request.name);
-        if (request.entityExternalId.empty() || name.empty()) {
-            answerCommand(request.cmdId, v1::CmdStatus::InvalidArgument, "Entity and name are required");
+        const std::string name = str::trimmed(request.name());
+        if (request.entityExternalId().empty() || name.empty()) {
+            answerCommand(request.cmdId(), v1::CmdStatus::InvalidArgument, "Entity and name are required");
             return;
         }
 
@@ -349,23 +346,23 @@ protected:
         // our three kinds map onto three of Hue's - a group of ours is a Hue
         // zone, which is Hue's word for a grouping that is not a place.
         const char *resource = nullptr;
-        switch (request.kind) {
+        switch (request.kind()) {
         case v1::NamedEntityKind::Room:  resource = "room";  break;
         case v1::NamedEntityKind::Group: resource = "zone";  break;
         case v1::NamedEntityKind::Scene: resource = "scene"; break;
         }
         if (!resource) {
-            answerCommand(request.cmdId, v1::CmdStatus::InvalidArgument, "Unknown entity kind");
+            answerCommand(request.cmdId(), v1::CmdStatus::InvalidArgument, "Unknown entity kind");
             return;
         }
 
         const std::string body = dump(Json{{"metadata", Json{{"name", name}}}});
-        const v1::CmdId cmdId = request.cmdId;
+        const v1::CmdId cmdId = request.cmdId();
         enqueue(callFor(m_settings, "PUT",
-                        std::string("/clip/v2/resource/") + resource + "/" + request.entityExternalId,
+                        std::string("/clip/v2/resource/") + resource + "/" + request.entityExternalId(),
                         body, true),
                 [this, cmdId](net::HttpClient::Result result) {
-                    if (!result.ok) {
+                    if (!result.ok()) {
                         answerCommand(cmdId, failureStatus(result),
                                       failureText(result, "Rename request failed"));
                         return;
@@ -384,42 +381,42 @@ protected:
     void onDeviceEffectInvoke(const sdk::DeviceEffectInvokeRequest &request) override
     {
         if (m_lifecycle != Lifecycle::Running || !m_http) {
-            answerCommand(request.cmdId, v1::CmdStatus::TemporarilyOffline, "Instance is not running");
+            answerCommand(request.cmdId(), v1::CmdStatus::TemporarilyOffline, "Instance is not running");
             return;
         }
-        const auto deviceIt = m_snapshot.devices.find(request.deviceExternalId);
+        const auto deviceIt = m_snapshot.devices.find(request.deviceExternalId());
         if (deviceIt == m_snapshot.devices.end() || deviceIt->second.light.resourceId.empty()) {
-            answerCommand(request.cmdId, v1::CmdStatus::InvalidArgument,
+            answerCommand(request.cmdId(), v1::CmdStatus::InvalidArgument,
                           "No Hue light resource for device");
             return;
         }
         const DeviceEntry &entry = deviceIt->second;
-        const std::string effectId = str::trimmed(request.effectId);
+        const std::string effectId = str::trimmed(request.effectId());
         const v1::DeviceEffectDescriptor *descriptor = nullptr;
-        for (const v1::DeviceEffectDescriptor &candidate : entry.device.effects) {
-            if (!effectId.empty() && candidate.id == effectId) {
+        for (const v1::DeviceEffectDescriptor &candidate : entry.device.effects()) {
+            if (!effectId.empty() && candidate.id() == effectId) {
                 descriptor = &candidate;
                 break;
             }
-            if (descriptor == nullptr && request.effect != v1::DeviceEffect::None
-                && candidate.effect == request.effect)
+            if (descriptor == nullptr && request.effect() != v1::DeviceEffect::None
+                && candidate.effect() == request.effect())
                 descriptor = &candidate;
         }
-        const Json descriptorMeta = descriptor ? parseObject(descriptor->metaJson) : Json::object();
+        const Json descriptorMeta = descriptor ? parseObject(descriptor->metaJson()) : Json::object();
         std::string hueEffect = jsonString(descriptorMeta, "hueEffect");
         if (hueEffect.empty())
             hueEffect = effectId;
         if (hueEffect.empty())
-            hueEffect = hueEffectNameFor(request.effect);
+            hueEffect = hueEffectNameFor(request.effect());
         if (hueEffect.empty()) {
-            answerCommand(request.cmdId, v1::CmdStatus::InvalidArgument,
+            answerCommand(request.cmdId(), v1::CmdStatus::InvalidArgument,
                           "Unsupported effect for this device");
             return;
         }
         std::string category = jsonString(descriptorMeta, "hueEffectCategory");
         if (category.empty())
             category = "effects";
-        const Json params = parseObject(request.paramsJson);
+        const Json params = parseObject(request.paramsJson());
         Json body = Json::object();
         if (category == "timed_effects") {
             Json timed = Json{{"effect", hueEffect}};
@@ -429,17 +426,17 @@ protected:
         } else {
             body["effects"] = Json{{"effect", hueEffect}};
         }
-        const v1::CmdId cmdId = request.cmdId;
+        const v1::CmdId cmdId = request.cmdId();
         enqueue(callFor(m_settings, "PUT", "/clip/v2/resource/light/" + entry.light.resourceId,
                         dump(body), true),
                 [this, cmdId, hueEffect](net::HttpClient::Result result) {
-                    if (!result.ok) {
+                    if (!result.ok()) {
                         answerCommand(cmdId, failureStatus(result),
                                       failureText(result, "Hue effect request failed"));
                         return;
                     }
                     v1::CmdResponse response = responseFor(cmdId, v1::CmdStatus::Success, {});
-                    response.finalValue = hueEffect;
+                    response.setFinalValue(hueEffect);
                     sendCommand(response);
                 });
     }
@@ -447,28 +444,28 @@ protected:
     void onSceneInvoke(const sdk::SceneInvokeRequest &request) override
     {
         if (m_lifecycle != Lifecycle::Running || !m_http) {
-            answerCommand(request.cmdId, v1::CmdStatus::TemporarilyOffline, "Instance is not running");
+            answerCommand(request.cmdId(), v1::CmdStatus::TemporarilyOffline, "Instance is not running");
             return;
         }
-        if (request.sceneExternalId.empty()) {
-            answerCommand(request.cmdId, v1::CmdStatus::InvalidArgument, "sceneExternalId missing");
+        if (request.sceneExternalId().empty()) {
+            answerCommand(request.cmdId(), v1::CmdStatus::InvalidArgument, "sceneExternalId missing");
             return;
         }
-        const std::string action = str::toLower(str::trimmed(request.action));
+        const std::string action = str::toLower(str::trimmed(request.action()));
         std::string recallAction = "active";
         if (action == "deactivate")
             recallAction = "inactive";
         else if (action == "dynamic")
             recallAction = "dynamic_palette";
         Json recall = Json{{"action", recallAction}};
-        const std::string groupId = str::trimmed(request.groupExternalId);
+        const std::string groupId = str::trimmed(request.groupExternalId());
         if (!groupId.empty())
             recall["target"] = Json{{"rid", groupId}, {"rtype", "zone"}};
-        const v1::CmdId cmdId = request.cmdId;
-        enqueue(callFor(m_settings, "PUT", "/clip/v2/resource/scene/" + request.sceneExternalId,
+        const v1::CmdId cmdId = request.cmdId();
+        enqueue(callFor(m_settings, "PUT", "/clip/v2/resource/scene/" + request.sceneExternalId(),
                         dump(Json{{"recall", recall}}), true),
                 [this, cmdId](net::HttpClient::Result result) {
-                    if (result.ok)
+                    if (result.ok())
                         answerCommand(cmdId, v1::CmdStatus::Success, {});
                     else
                         answerCommand(cmdId, failureStatus(result),
@@ -508,7 +505,7 @@ private:
         });
         if (!issued && done) {
             net::HttpClient::Result result;
-            result.error = "request could not be issued";
+            result.setError("request could not be issued");
             done(std::move(result));
             pump();
         }
@@ -523,7 +520,7 @@ private:
         for (Queued &entry : queue) {
             if (entry.done) {
                 net::HttpClient::Result result;
-                result.error = reason;
+                result.setError(reason);
                 entry.done(std::move(result));
             }
         }
@@ -532,19 +529,19 @@ private:
 
     static v1::CmdStatus failureStatus(const net::HttpClient::Result &result)
     {
-        if (result.unauthorized || result.status == 403)
+        if (result.unauthorized() || result.status() == 403)
             return v1::CmdStatus::NotAuthorized;
-        if (result.status >= 400)
+        if (result.status() >= 400)
             return v1::CmdStatus::Failure;
         return v1::CmdStatus::TemporarilyOffline;
     }
 
     static std::string failureText(const net::HttpClient::Result &result, const char *fallback)
     {
-        const std::string fromBridge = bridgeErrorText(result.body);
+        const std::string fromBridge = bridgeErrorText(result.body());
         if (!fromBridge.empty())
             return fromBridge;
-        return result.error.empty() ? fallback : result.error;
+        return result.error().empty() ? fallback : result.error();
     }
 
     /// One failed poll is a bridge that is not there: it is one HTTP call to
@@ -631,8 +628,8 @@ private:
                 [this, type](net::HttpClient::Result result) {
                     if (!m_pollRunning)
                         return;
-                    if (result.ok) {
-                        const Json data = jsonValue(parseJson(result.body), "data");
+                    if (result.ok()) {
+                        const Json data = jsonValue(parseJson(result.body()), "data");
                         if (data.is_array()) {
                             m_pollResources.byType[type] = data;
                             if (type == "button")
@@ -743,8 +740,8 @@ private:
                 ++announced;
             }
             for (const v1::Channel &channel : entry.channels) {
-                if (channel.hasValue)
-                    report(deviceId, channel.externalId, channel.lastValue, ts);
+                if (channel.hasValue())
+                    report(deviceId, channel.externalId(), channel.lastValue(), ts);
             }
             if (const auto color = colorOf(entry.light))
                 reportColor(deviceId, *color, ts);
@@ -752,10 +749,10 @@ private:
 
         std::set<std::string> nextRooms;
         for (const v1::Room &room : next.rooms) {
-            nextRooms.insert(room.externalId);
+            nextRooms.insert(room.externalId());
             const std::string key = roomKey(room);
-            if (m_roomKeys[room.externalId] != key) {
-                m_roomKeys[room.externalId] = key;
+            if (m_roomKeys[room.externalId()] != key) {
+                m_roomKeys[room.externalId()] = key;
                 sendRoomUpdated(room, &error);
             }
         }
@@ -770,10 +767,10 @@ private:
 
         std::set<std::string> nextGroups;
         for (const v1::Group &group : next.groups) {
-            nextGroups.insert(group.externalId);
+            nextGroups.insert(group.externalId());
             const std::string key = groupKey(group);
-            if (m_groupKeys[group.externalId] != key) {
-                m_groupKeys[group.externalId] = key;
+            if (m_groupKeys[group.externalId()] != key) {
+                m_groupKeys[group.externalId()] = key;
                 sendGroupUpdated(group, &error);
             }
         }
@@ -788,10 +785,10 @@ private:
 
         std::set<std::string> nextScenes;
         for (const v1::Scene &scene : next.scenes) {
-            nextScenes.insert(scene.externalId);
+            nextScenes.insert(scene.externalId());
             const std::string key = sceneKey(scene);
-            if (m_sceneKeys[scene.externalId] != key) {
-                m_sceneKeys[scene.externalId] = key;
+            if (m_sceneKeys[scene.externalId()] != key) {
+                m_sceneKeys[scene.externalId()] = key;
                 sendSceneUpdated(scene, &error);
             }
         }
@@ -823,7 +820,7 @@ private:
         v1::Utf8String error;
         if (!sendDeviceUpdated(entry.device, entry.channels, &error))
             log(sdk::LogLevel::Error, sdk::LogCategory::Internal, "failed to send deviceUpdated(%1): %2",
-                {entry.device.externalId, error});
+                {entry.device.externalId(), error});
     }
 
     /// The bridge device has a connectivity channel core will never hear
@@ -833,7 +830,7 @@ private:
         if (!m_linkUp)
             return;
         for (const auto &[deviceId, entry] : m_snapshot.devices) {
-            if (entry.device.deviceClass != v1::DeviceClass::Gateway)
+            if (entry.device.deviceClass() != v1::DeviceClass::Gateway)
                 continue;
             if (entry.channel("zigbee_status") == nullptr)
                 continue;
@@ -879,13 +876,15 @@ private:
             return;
         }
         net::HttpClient::Call call = callFor(m_settings, "GET", "/eventstream/clip/v2", {}, true);
-        for (net::Header &header : call.headers) {
+        std::vector<net::Header> headers = call.headers();
+        for (net::Header &header : headers) {
             if (header.first == "Accept")
                 header.second = "text/event-stream";
         }
+        call.setHeaders(std::move(headers));
         m_events.reset();
-        m_streamOpen = m_streamHttp->stream(call, {
-            .head = [this](int status, const std::vector<net::Header> &) {
+        m_streamOpen = m_streamHttp->stream(call, net::HttpClient::StreamHandlers(
+            [this](int status, const std::vector<net::Header> &) {
                 (void)status;
                 // Once when it first opens, and again only when it had been
                 // reported gone: a bridge that drops the stream every two
@@ -898,9 +897,8 @@ private:
                 setLinkUp(true);
                 armPollTimer();
             },
-            .chunk = [this](std::string_view piece) { onStreamBytes(piece); },
-            .done = [this](net::HttpClient::Result result) { onStreamEnded(result); },
-        });
+            [this](std::string_view piece) { onStreamBytes(piece); },
+            [this](net::HttpClient::Result result) { onStreamEnded(result); }));
         if (!m_streamOpen)
             streamFailed("stream could not be opened");
     }
@@ -920,7 +918,7 @@ private:
         m_streamOpen = false;
         const bool wasActive = m_streamActive;
         m_streamActive = false;
-        if (result.ok) {
+        if (result.ok()) {
             // A bridge ends the stream itself now and then; it is reopened at
             // once, and that is not a failure to report.
             log(sdk::LogLevel::Debug, sdk::LogCategory::Network,
@@ -928,7 +926,7 @@ private:
             scheduleStreamRetry(kStreamFastRetryMs);
         } else {
             streamFailed(failureText(result, "connection lost"));
-            if (wasActive || result.unauthorized)
+            if (wasActive || result.unauthorized())
                 setLinkUp(false);
         }
         armPollTimer();
@@ -1162,10 +1160,7 @@ private:
     static v1::CmdResponse responseFor(v1::CmdId cmdId, v1::CmdStatus status, const std::string &error)
     {
         v1::CmdResponse response;
-        response.id = cmdId;
-        response.tsMs = nowMs();
-        response.status = status;
-        response.error = error;
+        response.setId(cmdId).setTsMs(nowMs()).setStatus(status).setError(error);
         return response;
     }
 
@@ -1192,13 +1187,7 @@ private:
 
     void answerAction(v1::CmdId cmdId, v1::CmdStatus status, const std::string &error)
     {
-        v1::ActionResponse response;
-        response.id = cmdId;
-        response.tsMs = nowMs();
-        response.status = status;
-        response.error = error;
-        response.resultType = v1::ActionResultType::None;
-        sendAction(response);
+        sendAction(v1::ActionResponse::failure(cmdId, status, error).setTsMs(nowMs()));
     }
 
     void releaseLoopResources()
