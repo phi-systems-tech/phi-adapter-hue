@@ -1,3 +1,9 @@
+phi-adapter-hue (0.0~git202610251146.86e50ef-1) trixie; urgency=medium
+
+  * Rebuilt against phi-adapter-sdk 0.26.0: accessors instead of fields
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Sun, 25 Oct 2026 11:46:36 +0100
+
 phi-adapter-hue (0.0~git202610241658.2842acf-1) trixie; urgency=medium
 
   * Rebuilt against phi-adapter-sdk 0.25.0 (cameraFeatures, voice and
