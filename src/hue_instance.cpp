@@ -265,38 +265,41 @@ protected:
                 });
     }
 
-    void onAdapterActionInvoke(const sdk::AdapterActionInvokeRequest &request) override
+    // "Add": the bridge searches for new Zigbee devices on its own; they join
+    // and arrive through the event stream like any other device.
+    void onPairingStart(const sdk::PairingStartRequest &request) override
     {
-        const std::string actionId = str::trimmed(request.actionId());
-        if (actionId != "startDeviceDiscovery") {
-            answerAction(request.cmdId(), v1::CmdStatus::NotImplemented, "Unsupported adapter action");
-            return;
-        }
         if (m_lifecycle != Lifecycle::Running || !m_http) {
-            answerAction(request.cmdId(), v1::CmdStatus::TemporarilyOffline, "Instance is not running");
+            answerCommand(request.cmdId(), v1::CmdStatus::TemporarilyOffline, "Instance is not running");
             return;
         }
         if (m_snapshot.discoveryResourceId.empty()) {
-            answerAction(request.cmdId(), v1::CmdStatus::Failure, "Discovery resource not ready yet");
+            answerCommand(request.cmdId(), v1::CmdStatus::Failure, "Discovery resource not ready yet");
             return;
         }
         const std::string body = dump(Json{
             {"state", "start"}, {"action", Json{{"type", "search"}, {"action_type", "search"}}}});
         const v1::CmdId cmdId = request.cmdId();
+        const int durationS = request.durationS();
         enqueue(callFor(m_settings, "PUT",
                         "/clip/v2/resource/zigbee_device_discovery/" + m_snapshot.discoveryResourceId,
                         body, true),
-                [this, cmdId](net::HttpClient::Result result) {
+                [this, cmdId, durationS](net::HttpClient::Result result) {
                     if (!result.ok()) {
-                        answerAction(cmdId, failureStatus(result),
-                                     failureText(result, "Failed to start Hue Zigbee discovery"));
+                        answerCommand(cmdId, failureStatus(result),
+                                      failureText(result, "Failed to start Hue Zigbee discovery"));
                         return;
                     }
-                    sendAction(v1::ActionResponse::success(cmdId)
-                                   .setTsMs(nowMs())
-                                   .setResult(std::string("Hue Zigbee discovery started"),
-                                              v1::ActionResultType::String));
+                    answerCommand(cmdId, v1::CmdStatus::Success, {});
+                    // The bridge ends its search by itself; the window is
+                    // reported as asked for.
+                    sendPairingState(true, durationS);
                 });
+    }
+
+    void onPairingStop(const sdk::PairingStopRequest &request) override
+    {
+        answerCommand(request.cmdId(), v1::CmdStatus::NotSupported, "The bridge ends its search by itself");
     }
 
     void onDeviceNameUpdate(const sdk::DeviceNameUpdateRequest &request) override

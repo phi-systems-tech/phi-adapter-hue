@@ -103,8 +103,9 @@ phicore::adapter::v1::AdapterCapabilities capabilities()
     probe.setResultField("appKey");
     caps.addFactoryAction(probe);
 
-    caps.addInstanceAction({"startDeviceDiscovery", "Search for Hue devices",
-                            "Trigger the bridge to enter Zigbee discovery mode."});
+    caps.setTopologies(v1::Topology::Local);
+    // "Add" makes the bridge search; new devices join by themselves.
+    caps.setPairingStyles(v1::PairingStyle::JoinWindow);
 
     return caps;
 }
