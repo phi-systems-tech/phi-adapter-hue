@@ -96,10 +96,7 @@ phicore::adapter::v1::AdapterCapabilities capabilities()
         | v1::AdapterCapability::SupportsRoomRename
         | v1::AdapterCapability::SupportsGroupRename
         | v1::AdapterCapability::SupportsSceneRename
-        | v1::AdapterCapability::RequiresPolling
-        // The bridge keeps its own link to Philips' cloud (the Hue app away
-        // from home, firmware): whether it may is the household's choice.
-        | v1::AdapterCapability::VendorCloudLink);
+        | v1::AdapterCapability::RequiresPolling);
 
     v1::AdapterActionDescriptor probe("probe", "Test connection", "Reachability and credentials check");
     // Pairing answers with the application key, which goes into its field.
