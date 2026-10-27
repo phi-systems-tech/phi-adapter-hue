@@ -1,3 +1,10 @@
+phi-adapter-hue (0.0~git202610271059.bf16b2e-1) trixie; urgency=medium
+
+  * Capability VendorCloudLink: the vendor cloud switch is offered (SDK
+    0.29.1).
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Tue, 27 Oct 2026 10:59:22 +0100
+
 phi-adapter-hue (0.0~git202610271020.8928cb0-1) trixie; urgency=medium
 
   * Rebuilt against phi-adapter-sdk 0.29.0 (network clients).
