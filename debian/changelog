@@ -1,3 +1,9 @@
+phi-adapter-hue (0.0~git202610281836.374b664-1) trixie; urgency=medium
+
+  * Report Hue connectivity_issue as Disconnected
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Wed, 28 Oct 2026 18:36:48 +0100
+
 phi-adapter-hue (0.0~git202610271020.8928cb0-1) trixie; urgency=medium
 
   * Rebuilt against phi-adapter-sdk 0.29.0 (network clients).
