@@ -168,7 +168,7 @@ void testWhatABridgeTurnsInto()
     PHI_CHECK(v1::hasFlag(dial.device.flags(), v1::DeviceFlag::Battery));
     PHI_CHECK(std::get<std::int64_t>(dial.channel("battery")->lastValue()) == 87);
     PHI_CHECK(std::get<std::int64_t>(dial.channel("zigbee_status")->lastValue())
-              == static_cast<std::int64_t>(v1::ConnectivityStatus::Limited));
+              == static_cast<std::int64_t>(v1::ConnectivityStatus::Disconnected));
     PHI_CHECK(dial.channelSource.at("button1") == "button");
     PHI_CHECK(dial.channelSource.at("dial") == "relative_rotary");
 

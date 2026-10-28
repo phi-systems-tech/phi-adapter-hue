@@ -1014,9 +1014,11 @@ std::optional<v1::ConnectivityStatus> connectivityOf(const Json &resource)
     const std::string status = str::toLower(jsonString(resource, "status"));
     if (status == "connected")
         return v1::ConnectivityStatus::Connected;
-    if (status == "disconnected")
+    // connectivity_issue is how the bridge says a device stopped answering -
+    // a lamp without power. The bridge still accepts commands for it.
+    if (status == "disconnected" || status == "connectivity_issue")
         return v1::ConnectivityStatus::Disconnected;
-    if (status.find("issue") != std::string::npos || status.find("limited") != std::string::npos
+    if (status.find("unidirectional") != std::string::npos || status.find("limited") != std::string::npos
         || status.find("degraded") != std::string::npos)
         return v1::ConnectivityStatus::Limited;
     if (!status.empty())
