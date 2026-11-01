@@ -1,3 +1,9 @@
+phi-adapter-hue (0.0~git202611012042.a802a41-1) trixie; urgency=medium
+
+  * Rooms and groups without zone (SDK 0.31.0)
+
+ -- Marius Schumacher <marius.schumacher@phisys.com>  Sun, 01 Nov 2026 20:42:15 +0100
+
 phi-adapter-hue (0.0~git202610281836.374b664-1) trixie; urgency=medium
 
   * Report Hue connectivity_issue as Disconnected
