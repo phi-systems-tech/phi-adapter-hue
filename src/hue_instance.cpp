@@ -116,13 +116,13 @@ private:
 
 std::string roomKey(const v1::Room &room)
 {
-    return room.name() + "|" + room.zone() + "|" + room.metaJson() + "|"
+    return room.name() + "|" + room.metaJson() + "|"
         + str::join(room.deviceExternalIds(), ",");
 }
 
 std::string groupKey(const v1::Group &group)
 {
-    return group.name() + "|" + group.zone() + "|" + group.metaJson() + "|"
+    return group.name() + "|" + group.metaJson() + "|"
         + str::join(group.deviceExternalIds(), ",");
 }
 

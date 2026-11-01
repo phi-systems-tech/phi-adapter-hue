@@ -716,7 +716,6 @@ Snapshot buildSnapshot(const Resources &resources)
         if (room.externalId().empty())
             continue;
         room.setName(jsonString(jsonValue(obj, "metadata"), "name", false))
-            .setZone("room")
             .setRoomClass(roomClassFromArchetype(jsonString(jsonValue(obj, "metadata"), "archetype", false)))
             .setMetaJson(dump(obj))
             .setDeviceExternalIds(memberships[room.externalId()]);
@@ -728,7 +727,6 @@ Snapshot buildSnapshot(const Resources &resources)
         if (group.externalId().empty())
             continue;
         group.setName(jsonString(jsonValue(obj, "metadata"), "name", false))
-            .setZone("zone")
             .setMetaJson(dump(obj))
             .setDeviceExternalIds(memberships[group.externalId()]);
         snapshot.groups.push_back(std::move(group));
